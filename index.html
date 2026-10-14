@@ -11,51 +11,54 @@
 <meta name="apple-mobile-web-app-title" content="놀이방">
 <link rel="icon" type="image/png" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-180.png">
-<title>보드게임 놀이방</title>
+<title>보드게임 놀이방 · Game Room</title>
 <link rel="stylesheet" href="core/style.css">
 </head>
 <body>
 <div id="app">
-  <!-- 첫 화면 -->
+  <!-- Home -->
   <section id="home" class="screen scroll">
     <div class="home">
-      <h1 class="logo">놀이방</h1>
-      <p class="sub">친구들과 폰으로 하는 보드게임 · 빈자리는 AI 가 채워요</p>
+      <button class="langbtn" aria-label="Language">🌐 EN</button>
+      <h1 class="logo" data-ko="놀이방" data-en="Game Room">놀이방</h1>
+      <p class="sub" data-ko="친구들과 폰으로 하는 보드게임 · 빈자리는 AI 가 채워요" data-en="Board games with friends on your phone · AI fills empty seats">친구들과 폰으로 하는 보드게임 · 빈자리는 AI 가 채워요</p>
       <div class="sheet">
-        <label class="eyebrow" for="inName">이름</label>
-        <input id="inName" class="inp" maxlength="10" autocomplete="nickname" placeholder="다른 사람에게 보일 이름">
+        <label class="eyebrow" for="inName" data-ko="이름" data-en="Name">이름</label>
+        <input id="inName" class="inp" maxlength="10" autocomplete="nickname" placeholder="다른 사람에게 보일 이름" data-ko-ph="다른 사람에게 보일 이름" data-en-ph="Name others will see">
         <div class="btns2">
-          <button class="btn primary" id="bCreate">방 만들기</button>
-          <button class="btn" id="bSolo">혼자 하기 (AI)</button>
+          <button class="btn primary" id="bCreate" data-ko="방 만들기" data-en="Create room">방 만들기</button>
+          <button class="btn" id="bSolo" data-ko="혼자 하기 (AI)" data-en="Solo (vs AI)">혼자 하기 (AI)</button>
         </div>
-        <div class="or">친구 방에 들어가기</div>
+        <div class="or" data-ko="친구 방에 들어가기" data-en="Join a friend's room">친구 방에 들어가기</div>
         <div class="split2">
-          <input id="inCode" class="inp code" maxlength="5" autocomplete="off" placeholder="방 코드" aria-label="방 코드">
-          <button class="btn" id="bJoin">들어가기</button>
+          <input id="inCode" class="inp code" maxlength="5" autocomplete="off" placeholder="방 코드" data-ko-ph="방 코드" data-en-ph="Code" aria-label="Room code">
+          <button class="btn" id="bJoin" data-ko="들어가기" data-en="Join">들어가기</button>
         </div>
         <div class="err" id="homeErr" role="alert"></div>
       </div>
-      <div class="eyebrow mt">게임 — 눌러서 규칙 보기</div>
+      <div class="eyebrow mt" data-ko="게임 — 눌러서 규칙 보기" data-en="Games — tap for rules">게임 — 눌러서 규칙 보기</div>
       <div class="ggrid" id="homeGames"></div>
-      <p class="foot">방장의 화면이 게임을 진행합니다 · 서버 없이 기기끼리 직접 연결</p>
+      <p class="foot" data-ko="방장의 화면이 게임을 진행합니다 · 서버 없이 기기끼리 직접 연결" data-en="The host's screen runs the game · devices connect directly, no server">방장의 화면이 게임을 진행합니다 · 서버 없이 기기끼리 직접 연결</p>
     </div>
   </section>
 
-  <!-- 대기실 -->
+  <!-- Lobby -->
   <section id="lobby" class="screen scroll" hidden>
     <div class="home"><div class="sheet" id="lobbySheet"></div></div>
   </section>
 
-  <!-- 게임 -->
+  <!-- Game -->
   <section id="game" class="screen gscreen" hidden>
     <header class="gbar">
-      <div class="gtitle"><b id="gTitle"></b><span id="gStatus"></span></div>
+      <div class="gtitle"><b id="gTitle"></b></div>
       <div class="gbtns">
-        <button class="ibtn" id="bLog" aria-label="기록">📜</button>
-        <button class="ibtn" id="bRules" aria-label="규칙">❔</button>
-        <button class="ibtn" id="bSound" aria-label="소리" aria-pressed="true">🔊</button>
-        <button class="ibtn" id="bLeave" aria-label="나가기">🚪</button>
+        <button class="ibtn langbtn" aria-label="Language">🌐 EN</button>
+        <button class="ibtn" id="bLog" data-ko-label="기록" data-en-label="Log" aria-label="Log">📜</button>
+        <button class="ibtn" id="bRules" data-ko-label="규칙" data-en-label="Rules" aria-label="Rules">❔</button>
+        <button class="ibtn" id="bSound" data-ko-label="소리" data-en-label="Sound" aria-label="Sound" aria-pressed="true">🔊</button>
+        <button class="ibtn" id="bLeave" data-ko-label="나가기" data-en-label="Leave" aria-label="Leave">🚪</button>
       </div>
+      <div class="gstatus" id="gStatus"></div>
       <div class="timer" id="timer"></div>
     </header>
     <div class="ticker" id="ticker"></div>

@@ -1,7 +1,9 @@
-# 보드게임 놀이방
+# Game Room (보드게임 놀이방)
 
-친구들과 폰으로 하는 보드게임 — 도둑잡기 · 원카드 · 포커 · 고스톱 · 보석 상인 · 금광 탐험.
-방을 만들고 링크를 보내면 바로 함께할 수 있습니다. 빈자리는 AI 가 채웁니다.
-서버 없이 방장의 브라우저가 게임을 진행합니다 (PeerJS · WebRTC).
+Board games to play with friends on your phone: Dalmuti, Old Maid, One Card, Texas Hold'em, Go-Stop, Gem Merchant and Gold Mine.
+Create a room, send the link, and play. AI players fill any empty seats. The interface is in Korean and English (🌐 toggle).
 
-이 저장소는 배포용 결과물만 담고 있습니다.
+**Play:** https://sseung00.github.io/boardgames/
+
+There is no server: the host's browser runs the game and connects to the other players directly (PeerJS / WebRTC).
+This repository contains the built site only.

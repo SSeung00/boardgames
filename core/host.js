@@ -1,25 +1,30 @@
-/* 방장 쪽: 방(대기실 · 접속자)과 게임 진행기.
-   방장 브라우저가 규칙 엔진을 돌리고, 사람마다 자기 몫의 화면 정보(view)만 보낸다.
+/* Host side: the room (lobby, connections) and the game runner.
+   The host's browser runs the rules engine and sends each person only their own view.
 
-   게임 엔진 규약 (games/<id>/engine.js 의 default export) — 자세한 설명은 games/README.md
-     setup({n, seed, settings}) → 상태 S (JSON 으로 직렬화되는 객체)
-     pending(S) → [{p, kind, time?, secret?}]  지금 결정해야 하는 사람들 (비어 있으면 자동 진행)
-     validate(S, p, a) → true | "오류 문장"
-     apply(S, p, a) → 이벤트 배열
-     step(S) → 이벤트 배열              pending 이 비었을 때 (라운드 넘기기 등)
-     delay(S) → ms                       step 전에 기다릴 시간
-     timeout(S, p, kind) → 행동            제한 시간이 지났을 때
-     ai(S, p, {level, rng}) → 행동
-     view(S, p) → 그 사람에게 보여 줄 정보
-     filterEvent(ev, p, S) → ev | 가린 사본 | null   (선택)
+   Game engine contract (default export of games/<id>/engine.js) — full description in games/README.md
+     setup({n, seed, settings}) → state S (plain JSON-serializable object)
+     pending(S) → [{p, kind, time?, secret?}]  who must decide now (empty = automatic progress)
+     validate(S, p, a) → true | error text (bilingual tx object or string)
+     apply(S, p, a) → events
+     step(S) → events                    when pending is empty (next round, etc.)
+     delay(S) → ms                       wait before step
+     timeout(S, p, kind) → action        when the time limit runs out
+     ai(S, p, {level, rng}) → action
+     view(S, p) → what that person may see
+     filterEvent(ev, p, S) → ev | redacted copy | null   (optional)
      over(S) → bool,  results(S) → [{p, rank, score, note}]
 */
 import { GAMES, gameById } from "../games/registry.js";
 import { LS, toast, sound } from "./ui.js";
+import { L, tx } from "./i18n.js";
 
-const AI_NAMES = ["다람쥐", "너구리", "부엉이", "고양이", "여우", "판다", "수달", "펭귄", "고슴도치", "토끼"];
+/* AI seat names. The host picks the Korean name; each viewer's screen shows it in their own language (see aiName). */
+export const AI_NAMES = [["다람쥐", "Squirrel"], ["너구리", "Raccoon"], ["부엉이", "Owl"], ["고양이", "Cat"], ["여우", "Fox"],
+  ["판다", "Panda"], ["수달", "Otter"], ["펭귄", "Penguin"], ["고슴도치", "Hedgehog"], ["토끼", "Rabbit"]];
+const AI_EN = new Map(AI_NAMES);
+export const aiName = (name, lang) => (lang === "en" && AI_EN.has(name) ? AI_EN.get(name) : name);
 
-/* 방장의 시계 — 숨은 탭에서 타이머가 늦춰져도 게임이 굴러가도록 워커 타이머를 쓴다 */
+/* The host's clock — a worker timer, so the game keeps running even when browsers throttle hidden tabs. */
 export const hostSleep = (() => {
   try {
     const src = "onmessage = e => setTimeout(() => postMessage(e.data), e.data.ms);";
@@ -31,12 +36,12 @@ export const hostSleep = (() => {
   } catch (e) { return ms => new Promise(r => setTimeout(r, ms)); }
 })();
 
-export const cleanName = s => (String(s || "").replace(/\s+/g, " ").trim().slice(0, 10)) || "손님";
+export const cleanName = s => (String(s || "").replace(/\s+/g, " ").trim().slice(0, 10)) || L("손님", "Guest");
 
 export class Room {
-  /* deliver(p, msg): 사람 p 에게 메시지 보내기 (app.js 가 연결/로컬 전달을 맡는다) */
+  /* deliver(player, msg): send a message to a person (app.js handles connection vs. local delivery) */
   constructor({ name, token, code, deliver }) {
-    this.code = code;              // null 이면 혼자 하기 (AI 와만)
+    this.code = code;              // null = solo (AI only)
     this.deliver = deliver;
     this.players = [{ name: cleanName(name), token, kind: "human", local: true, online: true, conn: null }];
     const saved = LS.json("room", {});
@@ -58,7 +63,7 @@ export class Room {
     st.opts = o;
   }
 
-  /* ----- 접속 ----- */
+  /* ----- Connections ----- */
   hello(conn, msg) {
     const name = cleanName(msg.name);
     const back = this.players.findIndex(x => !x.local && x.kind === "human" && x.token === msg.token);
@@ -66,17 +71,18 @@ export class Room {
       const pl = this.players[back];
       if (pl.conn && pl.conn !== conn) try { pl.conn.close(); } catch (e) { }
       pl.conn = conn; pl.online = true;
-      if (this.runner) this.runner.presence(back, `${pl.name} 님이 다시 들어왔습니다`);
+      if (this.runner) this.runner.presence(back, tx(`{${back}} 님이 다시 들어왔습니다`, `{${back}} is back`));
       else this.lobby();
       return;
     }
     const reject = text => { try { conn.send({ t: "reject", text }); } catch (e) { } setTimeout(() => { try { conn.close(); } catch (e) { } }, 600); };
-    if (this.runner) return reject("이미 게임이 진행 중인 방입니다. 이번 게임이 끝나면 들어올 수 있습니다.");
+    if (this.runner) return reject(tx("이미 게임이 진행 중인 방입니다. 이번 게임이 끝나면 들어올 수 있습니다.",
+      "A game is already in progress in this room. You can join when it ends."));
     const max = Math.max(...GAMES.map(g => g.engine.players.max));
-    if (this.players.length >= max) return reject(`방이 꽉 찼습니다 (최대 ${max}명).`);
+    if (this.players.length >= max) return reject(tx(`방이 꽉 찼습니다 (최대 ${max}명).`, `The room is full (max ${max}).`));
     this.players.push({ name, token: msg.token, kind: "human", conn, local: false, online: true });
     this.fixSettings();
-    toast(`${name} 님이 들어왔습니다`); sound.join();
+    toast(L(`${name} 님이 들어왔습니다`, `${name} joined`)); sound.join();
     this.lobby();
   }
   onClose(conn) {
@@ -86,17 +92,18 @@ export class Room {
     pl.conn = null; pl.online = false;
     if (!this.runner) {
       this.players.splice(p, 1);
-      toast(`${pl.name} 님이 나갔습니다`);
+      toast(L(`${pl.name} 님이 나갔습니다`, `${pl.name} left`));
       this.lobby();
       return;
     }
-    this.runner.presence(p, `${pl.name} 님의 연결이 끊겼습니다 — 돌아올 때까지 AI 가 대신 둡니다`);
+    this.runner.presence(p, tx(`{${p}} 님의 연결이 끊겼습니다 — 돌아올 때까지 AI 가 대신 둡니다`,
+      `{${p}} disconnected — AI plays for them until they're back`));
   }
   sendTo(p, msg) {
     const pl = this.players[p];
     if (pl && pl.kind === "human") this.deliver(pl, msg);
   }
-  /* 사람에게서 온 메시지 */
+  /* A message from a person */
   receive(p, msg) {
     if (!msg || !msg.t) return;
     const isHost = this.players[p] && this.players[p].local;
@@ -108,7 +115,7 @@ export class Room {
     if (msg.t === "lobby") return this.backToLobby();
   }
 
-  /* ----- 대기실 ----- */
+  /* ----- Lobby ----- */
   publicPlayers() {
     return this.players.map((pl, i) => ({ name: pl.name, kind: pl.kind === "ai" ? "ai" : (pl.online ? "human" : "away"), host: i === 0 && pl.kind === "human" }));
   }
@@ -130,10 +137,10 @@ export class Room {
     this.fixSettings();
     const E = this.engine, st = this.settings;
     const humans = this.humans().filter(p => p.local || p.online);
-    if (humans.length > E.players.max) { toast(`이 게임은 최대 ${E.players.max}명입니다`); return; }
+    if (humans.length > E.players.max) { toast(L(`이 게임은 최대 ${E.players.max}명입니다`, `This game allows at most ${E.players.max} players`)); return; }
     const n = Math.max(st.seats, humans.length, E.players.min);
     const taken = new Set(humans.map(h => h.name));
-    const pool = AI_NAMES.filter(x => !taken.has(x)).sort(() => Math.random() - .5);
+    const pool = AI_NAMES.map(x => x[0]).filter(x => !taken.has(x)).sort(() => Math.random() - .5);
     this.players = humans.slice();
     for (let i = 0; this.players.length < n; i++) this.players.push({ name: pool[i] || `AI ${i + 1}`, kind: "ai", online: true });
     if (this.runner) this.runner.stop();
@@ -149,7 +156,7 @@ export class Room {
   }
 }
 
-/* 게임 한 판 진행: pending → (사람에게 묻기 | AI) → apply → 사람마다 view 전송 */
+/* One game: pending → (ask the person | AI) → apply → send each person their view */
 class Runner {
   constructor(room, engine, settings) {
     this.room = room; this.E = engine; this.settings = JSON.parse(JSON.stringify(settings));
@@ -157,11 +164,11 @@ class Runner {
     this.S = engine.setup({ n: room.players.length, seed, settings: this.settings.opts });
     this.seq = 0; this.askSeq = 0; this.asks = new Map(); this.alive = true; this.finished = false;
     this.kick = null; this.outbox = [];
-    this.runId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);   // 「한 판 더」 때 화면을 새로 그리도록
+    this.runId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);   // lets clients redraw on "play again"
   }
   stop() { this.alive = false; for (const a of this.asks.values()) a.cancel(); this.asks.clear(); if (this.kick) this.kick({ kick: true }); }
 
-  /* 접속 상태가 바뀌면: 그 사람의 질문을 새로 만든다 (사람 ↔ AI 대리) */
+  /* Presence changed: rebuild that person's question (human ↔ AI stand-in) */
   presence(p, text) {
     const a = this.asks.get(p);
     if (a) { a.cancel(); this.asks.delete(p); }
@@ -172,10 +179,11 @@ class Runner {
 
   receive(p, msg) {
     const a = this.asks.get(p);
-    if (!a || !a.human || a.id !== msg.id) { this.room.sendTo(p, { t: "error", text: "지금은 둘 차례가 아닙니다", stale: true }); return; }
+    if (!a || !a.human || a.id !== msg.id) { this.room.sendTo(p, { t: "error", text: tx("지금은 둘 차례가 아닙니다", "It's not your turn"), stale: true }); return; }
+    const bad = tx("규칙에 맞지 않는 수입니다", "That move isn't allowed");
     let ok;
-    try { ok = this.E.validate(this.S, p, msg.a); } catch (e) { ok = "규칙에 맞지 않는 수입니다"; }
-    if (ok !== true) { this.room.sendTo(p, { t: "error", text: ok || "규칙에 맞지 않는 수입니다" }); return; }
+    try { ok = this.E.validate(this.S, p, msg.a); } catch (e) { ok = bad; }
+    if (ok !== true) { this.room.sendTo(p, { t: "error", text: ok || bad }); return; }
     a.resolve({ p, id: a.id, action: msg.a });
   }
 
@@ -258,13 +266,13 @@ class Runner {
         this.asks.delete(r.p);
         let ok = true;
         try { ok = this.E.validate(this.S, r.p, r.action); } catch (e) { ok = String(e); }
-        if (ok !== true) {                              // AI · 시간 초과 행동이 틀린 경우: 엔진 버그. 기록하고 대체 행동으로.
-          console.error("잘못된 자동 행동", this.E.id, r, ok);
+        if (ok !== true) {                              // an AI / timeout action was illegal: engine bug. Log it and fall back.
+          console.error("illegal automatic action", this.E.id, r, ok);
           r.action = this.E.timeout(this.S, r.p, a.kind);
-          if (this.E.validate(this.S, r.p, r.action) !== true) throw new Error(`${this.E.id}: 대체 행동도 규칙에 맞지 않음`);
+          if (this.E.validate(this.S, r.p, r.action) !== true) throw new Error(`${this.E.id}: fallback action is illegal too`);
         }
         const evs = this.E.apply(this.S, r.p, r.action) || [];
-        if (r.timeout) this.outbox.push({ type: "notice", text: `${this.room.players[r.p].name} 님 시간 초과` });
+        if (r.timeout) this.outbox.push({ type: "notice", text: tx(`{${r.p}} 님 시간 초과`, `{${r.p}} ran out of time`) });
         this.outbox.push(...evs);
       }
       if (!this.alive) return;
@@ -273,7 +281,7 @@ class Runner {
       this.broadcast();
     } catch (e) {
       console.error(e);
-      this.outbox.push({ type: "notice", text: "게임 진행 중 오류가 났습니다: " + (e.message || e) });
+      this.outbox.push({ type: "notice", text: tx("게임 진행 중 오류가 났습니다: " + (e.message || e), "Something went wrong in the game: " + (e.message || e)) });
       this.finished = true;
       this.broadcast();
     }

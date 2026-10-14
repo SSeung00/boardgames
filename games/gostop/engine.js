@@ -1,18 +1,21 @@
-/* 고스톱 (3명) · 맞고 (2명) — 화투 48장 + 보너스 피.
-   한 차례: 손패 한 장 내기 (바닥에 같은 월이 있으면 짝) → 더미 맨 위 한 장 뒤집기 (역시 같은 월과 짝).
-   먹은 패의 점수가 나기 점수(맞고 7점 · 고스톱 3점)를 넘으면 고 또는 스톱. 정한 판 수를 마치고 누적 점수로 순위.
+/* Go-Stop (3 players) · Matgo (2 players) — 48 hwatu cards + bonus pi.
+   A turn: play one hand card (pairs with a floor card of the same month) → flip the top card of the draw pile (pairs the same way).
+   When the captured cards score at least the winning threshold (Matgo 7 · Go-Stop 3), choose Go or Stop.
+   After the chosen number of rounds, players are ranked by total score.
 
-   상태 S 의 주요 칸
-     hands[p] 손패 · floor 바닥 · deck 더미 (맨 위 = 배열 끝) · caps[p] 먹은 패
-     phase: "play" 낼 차례 | "choose" 바닥 두 장 중 고르기 | "gostop" 고/스톱 | "roundEnd" 판 정산 | "over"
-     tp: 진행 중인 차례 (고르기 때문에 멈출 수 있다) · ch: 고르기 정보 · ppeok: {월: 뻑 낸 사람}
-     go[p] 고 횟수 · goScore[p] 마지막 고 때 점수 · shook[p] 흔들기·폭탄 [{m, bomb}] · flips[p] 뒤집기만 하는 차례 수
-     totals[p] 누적 점수 (합은 항상 0) · nagari 나가리 배수 · result 마지막 판 정산 */
+   Main fields of the state S
+     hands[p] hand · floor · deck draw pile (top = end of array) · caps[p] captured cards
+     phase: "play" | "choose" (pick one of two floor cards) | "gostop" | "roundEnd" (round settled) | "over"
+     tp: the turn in progress (may pause for a choice) · ch: choice info · ppeok: {month: player who made the ppeok}
+     go[p] number of Go calls · goScore[p] score at the last Go · shook[p] shakes/bombs [{m, bomb}] · flips[p] flip-only turns
+     totals[p] running totals (always sum to 0) · nagari nagari multiplier · result settlement of the last round
+   Every text produced here is bilingual (tx) — see games/README.md. */
 import { shuffle, randInt } from "../../core/rng.js";
-import { CARDS, DECK48, BONUS, SET_NAME, isCard, monthOf, isBonus, cardName, sortCards } from "./cards.js";
+import { tx } from "../../core/i18n.js";
+import { CARDS, DECK48, BONUS, SET_NAME, COMBO, isCard, monthOf, isBonus, cardNameTx, monTx, sortCards } from "./cards.js";
 
-const name = "고스톱";
-const TH = n => (n === 2 ? 7 : 3);                        // 나기 점수
+const name = tx("고스톱", "Go-Stop");
+const TH = n => (n === 2 ? 7 : 3);                        // winning threshold
 const others = (S, p) => { const r = []; for (let q = 0; q < S.n; q++) if (q !== p) r.push(q); return r; };
 const ofMonth = (arr, m) => arr.filter(x => monthOf(x) === m);
 function removeIds(arr, ids) { for (const id of ids) { const i = arr.indexOf(id); if (i >= 0) arr.splice(i, 1); } }
@@ -20,11 +23,14 @@ const turnsOf = (S, p) => S.hands[p].length + S.flips[p];
 const anyTurns = S => S.hands.some((h, p) => h.length + S.flips[p] > 0);
 const zeros = n => Array.from({ length: n }, () => 0);
 const pick = (rng, a) => a[Math.floor(rng() * a.length)];
-/* 보통 피 두 장처럼 똑같은 두 장은 고를 필요가 없다 */
+/* Two identical cards (e.g. two plain pi) need no choice */
 const sameKind = (a, b) => CARDS[a].t === "p" && CARDS[b].t === "p" && CARDS[a].pv === CARDS[b].pv;
+/* "1 win" / "2 wins" */
+const plural = (n, one, many) => `${n} ${Math.abs(n) === 1 ? one : many}`;
 
-/* ===================== 점수 ===================== */
-/* gukAs: 9월 국진을 "y" 열끗 / "p" 쌍피 중 무엇으로 셀지 */
+/* ===================== Scoring ===================== */
+/* gukAs: count the September gukjin as "y" animal or "p" double pi.
+   items: [label (tx), points, key] — key: g3/g4/g5/rain3 · t · hong/cheong/cho · y · go · pi */
 export function scoreCards(cards, gukAs) {
   let g = 0, rain = false, t = 0, y = 0, pi = 0;
   const sets = { hong: 0, cheong: 0, cho: 0, go: 0 };
@@ -37,18 +43,18 @@ export function scoreCards(cards, gukAs) {
   }
   const items = [];
   const gp = g >= 5 ? 15 : g === 4 ? 4 : g === 3 ? (rain ? 2 : 3) : 0;
-  if (gp) items.push([g === 3 && rain ? "비삼광" : `${g}광`, gp]);
+  if (gp) items.push(g === 3 && rain ? [tx("비삼광", "3 Gwang (rain)"), gp, "rain3"] : [tx(`${g}광`, `${g} Gwang`), gp, "g" + g]);
   let tp = t >= 5 ? t - 4 : 0;
-  if (tp) items.push([`띠 ${t}장`, tp]);
-  for (const k of ["hong", "cheong", "cho"]) if (sets[k] === 3) { tp += 3; items.push([SET_NAME[k], 3]); }
+  if (tp) items.push([tx(`띠 ${t}장`, `${t} Ribbons`), tp, "t"]);
+  for (const k of ["hong", "cheong", "cho"]) if (sets[k] === 3) { tp += 3; items.push([SET_NAME[k], 3, k]); }
   let yp = y >= 5 ? y - 4 : 0;
-  if (yp) items.push([`열끗 ${y}장`, yp]);
-  if (sets.go === 3) { yp += 5; items.push(["고도리", 5]); }
+  if (yp) items.push([tx(`열끗 ${y}장`, `${y} Animals`), yp, "y"]);
+  if (sets.go === 3) { yp += 5; items.push([SET_NAME.go, 5, "go"]); }
   const pp = pi >= 10 ? pi - 9 : 0;
-  if (pp) items.push([`피 ${pi}장`, pp]);
+  if (pp) items.push([tx(`피 ${pi}장`, `${pi} Pi`), pp, "pi"]);
   return { g, t, y, pi, gp, tp, yp, pp, total: gp + tp + yp + pp, items, sets, guk: null };
 }
-/* 국진은 점수가 더 높아지는 쪽으로 자동 (같으면 열끗) */
+/* Gukjin automatically counts the way that scores more (animal on a tie) */
 export function scoreOf(cards) {
   if (!cards.includes("9a")) return scoreCards(cards, "y");
   const a = scoreCards(cards, "y"), b = scoreCards(cards, "p");
@@ -57,7 +63,7 @@ export function scoreOf(cards) {
   return a;
 }
 
-/* 이긴 사람 w 가 지금 판을 끝낼 때의 정산 (S 를 바꾸지 않는다) */
+/* Settlement if winner w ended the round now (does not change S) */
 export function settle(S, w) {
   const ws = scoreOf(S.caps[w]);
   const go = S.go[w], goMul = go >= 3 ? 2 ** (go - 2) : 1;
@@ -70,7 +76,7 @@ export function settle(S, w) {
     for (const id of S.caps[q]) {
       const c = CARDS[id];
       if (c.t === "p") lpi += c.pv;
-      else if (c.guk) lpi += 2;                  // 진 사람의 국진은 피박을 면하는 쪽(쌍피)으로
+      else if (c.guk) lpi += 2;                  // a loser's gukjin counts as double pi (helps avoid pibak)
       else if (c.t === "g") lg++;
     }
     const pibak = ws.pp > 0 && lpi < 6;
@@ -78,7 +84,7 @@ export function settle(S, w) {
     const mul = 2 ** shakes * S.nagari * (pibak ? 2 : 1) * (gwangbak ? 2 : 1) * (meong ? 2 : 1);
     losers.push({ p: q, pi: lpi, gwang: lg, pibak, gwangbak, meongbak: meong, mul, amount: pts * mul, pay: pts * mul, go: S.go[q], gobak: false, covered: false });
   }
-  // 고박 (3명): 고를 불렀다 진 사람이 두 사람 몫을 모두 낸다
+  // Gobak (3 players): a loser who called Go pays both losers' shares
   if (S.n === 3) {
     const goers = losers.filter(l => l.go > 0);
     if (goers.length === 1) {
@@ -95,7 +101,7 @@ export function settle(S, w) {
   };
 }
 
-/* ===================== 판 준비 ===================== */
+/* ===================== Dealing ===================== */
 function deal(S) {
   const n = S.n, hn = n === 2 ? 10 : 7, fn = n === 2 ? 8 : 6;
   let deck, hands, floor, extra;
@@ -105,11 +111,11 @@ function deal(S) {
     for (let p = 0; p < n; p++) hands.push(deck.splice(deck.length - hn, hn));
     floor = deck.splice(deck.length - fn, fn);
     extra = [];
-    // 바닥에 깔린 보너스는 선이 가져가고, 그 자리는 더미에서 채운다
+    // Bonus cards dealt to the floor go to the leader; their spots are refilled from the pile
     for (let i = 0; i < floor.length; i++) while (isBonus(floor[i])) { extra.push(floor[i]); floor[i] = deck.pop(); }
     const cnt = {};
     for (const c of floor) cnt[monthOf(c)] = (cnt[monthOf(c)] || 0) + 1;
-    if (!Object.values(cnt).some(k => k >= 4) || tries >= 40) break;   // 바닥에 같은 월 4장 → 다시 나누기
+    if (!Object.values(cnt).some(k => k >= 4) || tries >= 40) break;   // all four of a month on the floor → redeal
   }
   S.hands = hands; S.floor = floor; S.deck = deck;
   S.caps = hands.map(() => []);
@@ -117,9 +123,13 @@ function deal(S) {
   S.go = zeros(n); S.goScore = zeros(n); S.flips = zeros(n); S.shook = hands.map(() => []);
   S.ppeok = {}; S.tp = null; S.ch = null; S.last = null; S.result = null; S.shown = [];
   S.turn = S.leader; S.phase = "play";
-  const ev = [{ type: "deal", round: S.round, leader: S.leader, text: `${S.round}판 시작 — {${S.leader}} 님이 선${S.nagari > 1 ? ` (나가리 ×${S.nagari})` : ""}` }];
-  if (extra.length) ev.push({ type: "bonus", p: S.leader, card: extra[0], floor: true, text: `바닥의 보너스 피를 선인 {${S.leader}} 님이 가져갑니다` });
-  // 총통: 손패에 같은 월 4장 → 바로 승리 (10점)
+  const nag = S.nagari > 1;
+  const ev = [{ type: "deal", round: S.round, leader: S.leader,
+    text: tx(`${S.round}판 시작 — {${S.leader}} 님이 선${nag ? ` (나가리 ×${S.nagari})` : ""}`,
+      `Round ${S.round} — {${S.leader}} leads${nag ? ` (nagari ×${S.nagari})` : ""}`) }];
+  if (extra.length) ev.push({ type: "bonus", p: S.leader, card: extra[0], floor: true,
+    text: tx(`바닥의 보너스 피를 선인 {${S.leader}} 님이 가져갑니다`, `The leader {${S.leader}} takes the bonus pi from the floor`) });
+  // Chongtong: all four cards of a month in the dealt hand → instant win (10 points)
   for (let k = 0; k < n; k++) {
     const p = (S.leader + k) % n;
     for (let m = 1; m <= 12; m++) {
@@ -133,14 +143,15 @@ function deal(S) {
       for (let q = 0; q < n; q++) S.totals[q] += deltas[q];
       S.wins[p]++; S.leader = p; S.nagari = 1;
       S.phase = "roundEnd";
-      ev.push({ type: "chongtong", p, m, cards: four, toast: true, text: `{${p}} 님 총통! (${m}월 4장) — 10점` });
+      ev.push({ type: "chongtong", p, m, cards: four, toast: true,
+        text: tx(`{${p}} 님 총통! (${m}월 4장) — 10점`, `{${p}}: Chongtong! (all four ${monTx(m).en}) — 10 points`) });
       return ev;
     }
   }
   return ev;
 }
 
-/* ===================== 한 차례 ===================== */
+/* ===================== One turn ===================== */
 function capture(S, tp, ids) {
   removeIds(S.floor, ids);
   S.caps[tp.p].push(...ids);
@@ -148,24 +159,26 @@ function capture(S, tp, ids) {
 }
 function stealPi(S, from, to) {
   const cap = S.caps[from];
-  for (const want of [1, 2, 3]) for (let i = cap.length - 1; i >= 0; i--) {     // 보통 피 → 쌍피 → 쓰리피
+  for (const want of [1, 2, 3]) for (let i = cap.length - 1; i >= 0; i--) {     // plain pi → double pi → triple pi
     const c = CARDS[cap[i]];
     if (c.t === "p" && c.pv === want) { const [id] = cap.splice(i, 1); S.caps[to].push(id); return id; }
   }
   return null;
 }
 function ppeokTake(S, tp, m) {
-  if (S.ppeok[m] !== undefined) { tp.steals++; tp.combos.push(S.ppeok[m] === tp.p ? "자뻑" : "뻑 먹기"); }
+  if (S.ppeok[m] !== undefined) { tp.steals++; tp.combos.push(S.ppeok[m] === tp.p ? "selfPpeok" : "ppeokTake"); }
   delete S.ppeok[m];
 }
 
-/* 손에 든 보너스 피: 내 피로 가져가고 더미에서 한 장 받는다 (차례는 그대로) */
+/* Bonus pi from the hand: goes to my pi and I draw one card from the pile (still my turn) */
 function playBonus(S, p, id) {
   removeIds(S.hands[p], [id]);
   S.caps[p].push(id);
   const drew = S.deck.length ? S.deck.pop() : null;
   if (drew) S.hands[p].push(drew);
-  return [{ type: "bonus", p, card: id, drew, text: `{${p}} 님 ${cardName(id)} — 피로 가져가고 한 장 더 받음` }];
+  const cn = cardNameTx(id);
+  return [{ type: "bonus", p, card: id, drew,
+    text: tx(`{${p}} 님 ${cn.ko} — 피로 가져가고 한 장 더 받음`, `{${p}} plays a ${cn.en} — keeps it as pi and draws a card`) }];
 }
 
 function playTurn(S, p, a) {
@@ -184,10 +197,11 @@ function playTurn(S, p, a) {
       tp.played = mine.slice();
       S.floor.push(...mine);
       capture(S, tp, [...mine, ...F]);
-      tp.kind = "bomb"; tp.steals++; tp.combos.push("폭탄");
+      tp.kind = "bomb"; tp.steals++; tp.combos.push("bomb");
       S.flips[p] += 2;
       S.shook[p].push({ m, bomb: true });
-      ev.push({ type: "bomb", p, m, cards: mine.slice(), toast: true, text: `{${p}} 님 ${m}월 폭탄! 💣 (이기면 ×2)` });
+      ev.push({ type: "bomb", p, m, cards: mine.slice(), toast: true,
+        text: tx(`{${p}} 님 ${m}월 폭탄! 💣 (이기면 ×2)`, `{${p}}: ${monTx(m).en} bomb! 💣 (×2 if they win)`) });
     } else {
       removeIds(hand, [a.card]);
       tp.played = [a.card];
@@ -196,8 +210,9 @@ function playTurn(S, p, a) {
         const show = [a.card, ...ofMonth(hand, m)];
         S.shook[p].push({ m, bomb: false });
         S.shown.push(...show);
-        tp.combos.push("흔들기");
-        ev.push({ type: "shake", p, m, cards: show, toast: true, text: `{${p}} 님 ${m}월 흔들기! (이기면 ×2)` });
+        tp.combos.push("shake");
+        ev.push({ type: "shake", p, m, cards: show, toast: true,
+          text: tx(`{${p}} 님 ${m}월 흔들기! (이기면 ×2)`, `{${p}} shakes ${monTx(m).en}! (×2 if they win)`) });
       }
       if (F.length === 0) tp.kind = "lay";
       else if (F.length === 1) { tp.kind = "pair"; tp.target = F[0]; }
@@ -219,7 +234,7 @@ function playTurn(S, p, a) {
 
 function flipStage(S, ev) {
   const tp = S.tp, p = tp.p;
-  while (S.deck.length && isBonus(S.deck[S.deck.length - 1])) {     // 뒤집은 보너스: 내 것으로 하고 다시 뒤집기
+  while (S.deck.length && isBonus(S.deck[S.deck.length - 1])) {     // flipped bonus: keep it and flip again
     const b = S.deck.pop();
     S.caps[p].push(b); tp.flipped.push(b); tp.captured.push(b);
     ev.push({ type: "flip", p, card: b, bonus: true });
@@ -230,9 +245,9 @@ function flipStage(S, ev) {
   S.floor.push(d);
   ev.push({ type: "flip", p, card: d });
   if (md === tp.m && (tp.kind === "lay" || tp.kind === "pair" || tp.kind === "pair2")) {
-    if (tp.kind === "lay") { capture(S, tp, [tp.played[0], d]); tp.steals++; tp.combos.push("쪽"); }
-    else if (tp.kind === "pair") { tp.target = null; S.ppeok[md] = p; tp.combos.push("뻑"); }
-    else { tp.target = null; capture(S, tp, ofMonth(S.floor, md)); tp.steals++; tp.combos.push("따닥"); }
+    if (tp.kind === "lay") { capture(S, tp, [tp.played[0], d]); tp.steals++; tp.combos.push("jjok"); }
+    else if (tp.kind === "pair") { tp.target = null; S.ppeok[md] = p; tp.combos.push("ppeok"); }
+    else { tp.target = null; capture(S, tp, ofMonth(S.floor, md)); tp.steals++; tp.combos.push("ttadak"); }
     return finishTurn(S, ev);
   }
   const G = S.floor.filter(x => x !== d && monthOf(x) === md);
@@ -247,19 +262,23 @@ function flipStage(S, ev) {
   finishTurn(S, ev);
 }
 
-/* 기록 한 줄: "{0} 님: 3월 홍단 → 8월 광 · 4장 먹음 · 쪽!" (→ 뒤는 뒤집은 패) */
+/* One log line: "{0}: Mar Hongdan → Aug Gwang · took 4 · Jjok!" (after → : the flipped cards) */
 function turnText(tp) {
-  const parts = [];
-  if (tp.kind === "flip") parts.push("(뒤집기만)");
-  else if (tp.kind === "bomb") parts.push(`${tp.m}월 폭탄`);
-  else parts.push(cardName(tp.played[0]));
-  if (tp.flipped.length) parts.push(tp.flipped.map(cardName).join(" + "));      // 뒤집은 보너스 피도 함께
-  let s = `{${tp.p}} 님: ${parts.join(" → ")}`;
-  if (tp.captured.length) s += ` · ${tp.captured.length}장 먹음`;
-  const combos = tp.combos.filter(c => c !== "흔들기" && c !== "폭탄");
-  if (combos.length) s += ` · ${combos.join(" · ")}!`;
-  if (tp.stolen.length) s += ` (피 ${tp.stolen.length}장 뺏음)`;
-  return s;
+  const out = {};
+  for (const l of ["ko", "en"]) {
+    const ko = l === "ko", parts = [];
+    if (tp.kind === "flip") parts.push(ko ? "(뒤집기만)" : "(flip only)");
+    else if (tp.kind === "bomb") parts.push(ko ? `${tp.m}월 폭탄` : `${monTx(tp.m).en} bomb`);
+    else parts.push(cardNameTx(tp.played[0])[l]);
+    if (tp.flipped.length) parts.push(tp.flipped.map(c => cardNameTx(c)[l]).join(" + "));      // flipped bonus pi included
+    let s = `{${tp.p}}${ko ? " 님" : ""}: ${parts.join(" → ")}`;
+    if (tp.captured.length) s += ko ? ` · ${tp.captured.length}장 먹음` : ` · took ${tp.captured.length}`;
+    const combos = tp.combos.filter(c => c !== "shake" && c !== "bomb");
+    if (combos.length) s += ` · ${combos.map(c => COMBO[c][l]).join(" · ")}!`;
+    if (tp.stolen.length) s += ko ? ` (피 ${tp.stolen.length}장 뺏음)` : ` (stole ${tp.stolen.length} pi)`;
+    out[l] = s;
+  }
+  return tx(out.ko, out.en);
 }
 
 function finishTurn(S, ev) {
@@ -267,7 +286,7 @@ function finishTurn(S, ev) {
   S.phase = "play"; S.ch = null;
   if (tp.target) { capture(S, tp, [tp.played[0], tp.target]); tp.target = null; }
   for (const k of Object.keys(S.ppeok)) if (ofMonth(S.floor, +k).length !== 3) delete S.ppeok[k];
-  if (!S.floor.length && anyTurns(S)) { tp.steals++; tp.combos.push("쓸"); }     // 마지막 차례의 쓸은 없음
+  if (!S.floor.length && anyTurns(S)) { tp.steals++; tp.combos.push("sseul"); }     // no sseul on the round's last turn
   for (const q of others(S, p)) for (let k = 0; k < tp.steals; k++) {
     const c = stealPi(S, q, p);
     if (c) tp.stolen.push({ from: q, card: c });
@@ -279,7 +298,7 @@ function finishTurn(S, ev) {
   if (sc >= TH(S.n) && sc > S.goScore[p]) {
     S.turn = p;
     if (turnsOf(S, p) > 0) { S.phase = "gostop"; return; }
-    ev.push(...endRound(S, p, "auto"));          // 더 낼 패가 없으면 자동 스톱
+    ev.push(...endRound(S, p, "auto"));          // no cards left to play → automatic Stop
     return;
   }
   if (!anyTurns(S)) { ev.push(...endRound(S, null)); return; }
@@ -298,7 +317,8 @@ function endRound(S, w, how) {
   if (w === null) {
     S.nagari *= 2;
     S.result = { kind: "nagari", round: S.round, nagari: S.nagari, deltas: zeros(S.n) };
-    return [{ type: "nagari", toast: true, text: `나가리! 다음 판은 점수 ×${S.nagari}` }];
+    return [{ type: "nagari", toast: true,
+      text: tx(`나가리! 다음 판은 점수 ×${S.nagari}`, `Nagari — no winner! Next round scores ×${S.nagari}`) }];
   }
   const R = settle(S, w);
   R.how = how;
@@ -307,10 +327,11 @@ function endRound(S, w, how) {
   S.wins[w]++;
   S.leader = w; S.nagari = 1;
   return [{ type: "roundEnd", winner: w, gain: R.deltas[w], toast: true,
-    text: `{${w}} 님 ${how === "auto" ? "났습니다" : "스톱"}! ${R.pts}점 → 모두 합해 ${R.deltas[w]}점 받음` }];
+    text: tx(`{${w}} 님 ${how === "auto" ? "났습니다" : "스톱"}! ${R.pts}점 → 모두 합해 ${R.deltas[w]}점 받음`,
+      `{${w}} ${how === "auto" ? "wins" : "stops"}! ${R.pts} points → collects ${R.deltas[w]} in total`) }];
 }
 
-/* 손패 기준으로 흔들기 · 폭탄이 되는 월 */
+/* Months my hand can shake or bomb with */
 function specials(S, p) {
   const r = { shake: [], bomb: [] };
   for (let m = 1; m <= 12; m++) {
@@ -334,7 +355,7 @@ function profile(S, q) {
   for (const r of others(S, q)) for (const id of S.caps[r]) { const s = CARDS[id].set; if (s) pr.dead[s] = true; }
   return pr;
 }
-/* 카드 한 장이 그 사람에게 얼마나 값진가 (대략 '점수' 단위). aware: 약 · 단 · 고도리 진행을 따지는지 */
+/* How valuable one card is to that player (roughly in points). aware: whether set / ribbon / godori progress counts */
 function cardVal(pr, id, aware) {
   const c = CARDS[id];
   const perPi = pr.pi >= 7 ? 0.95 : pr.pi < 5 ? 0.8 : 0.65;
@@ -353,7 +374,7 @@ function cardVal(pr, id, aware) {
   if (c.guk) v = Math.max(v, 2 * perPi);
   return v;
 }
-/* 곧 날 것 같은 정도 (상대 견제용) */
+/* How close a player looks to scoring out (for blocking opponents) */
 function potential(S, q) {
   const pr = profile(S, q);
   let v = 0;
@@ -383,7 +404,7 @@ function aiCtx(S, p, level) {
     U: Math.max(1, U), nOpp: S.n - 1, nextHand: S.hands[(p + 1) % S.n].length, stealV: 0.9
   };
 }
-/* 손패 한 장(또는 폭탄)을 냈을 때의 기대 이득 — 뒤집기는 쪽 · 뻑 · 따닥 확률만 가볍게 본다 */
+/* Expected gain of playing one hand card (or a bomb) — the flip only weighs jjok / ppeok / ttadak odds lightly */
 function evalPlay(S, p, X, id, mode) {
   const m = monthOf(id), F = ofMonth(S.floor, m), mine = ofMonth(S.hands[p], m);
   const u = X.unseen[m], pFlip = u / X.U, steal = X.stealV * X.nOpp;
@@ -391,17 +412,17 @@ function evalPlay(S, p, X, id, mode) {
   if (mode === "bomb") return take([...mine, ...F]) + steal + 3.5;
   let v;
   if (F.length === 0) {
-    const pOpp = Math.min(1, u * X.nextHand / X.U);              // 다음 사람이 이 월을 들고 있을 확률 (대략)
-    const keep = mine.length >= 2 ? 0.3 : 1;                      // 같은 월이 손에 더 있으면 되찾을 수 있다
+    const pOpp = Math.min(1, u * X.nextHand / X.U);              // rough chance the next player holds this month
+    const keep = mine.length >= 2 ? 0.3 : 1;                      // more of this month in hand → can take it back
     const loss = X.block ? X.opp(id) : X.aware ? 0.5 * X.my(id) + 0.3 : 0.3;
     v = -0.5 + pFlip * (X.my(id) + steal) - keep * pOpp * loss * 0.7;
   } else if (F.length === 1) {
     const g = take([id, F[0]]);
-    v = g - pFlip * g;                                            // 뻑 위험
+    v = g - pFlip * g;                                            // ppeok risk
   } else if (F.length === 2) {
     const [a, b] = F.slice().sort((x, y) => X.my(y) - X.my(x));
     v = take([id, a]) + pFlip * (take([b]) + steal);
-    if (X.block && u > 0) v -= 0.3 * X.opp(b);                    // 남긴 한 장을 상대가 먹을 수 있다
+    if (X.block && u > 0) v -= 0.3 * X.opp(b);                    // an opponent may take the card left behind
   } else {
     v = take([id, ...F]) + (S.ppeok[m] !== undefined ? steal : 0);
   }
@@ -440,27 +461,30 @@ function aiGo(S, p, level) {
   if (left < 2) return { go: false };
   const threat = Math.max(...others(S, p).map(q => scoreOf(S.caps[q]).total + potential(S, q)));
   if (level === "normal") return { go: left >= 3 && S.go[p] < 3 && threat <= th - (S.n === 2 ? 3 : 2) };
-  // 어려움: 상대 위협 · 고박(3명이면 지면 두 사람 몫) · 지금 받을 점수(배수)를 함께 본다.
-  // 시험 대국에서는 2장 이상 남았을 때 과감히 고 하는 쪽이 이득이었다 (맞고는 고박이 없다).
+  // Hard: weighs opponents' threat, gobak (with 3 players a loser may pay both shares) and the payout now (multipliers).
+  // In test games, going boldly with 2+ cards left paid off (Matgo has no gobak).
   const now = settle(S, p).deltas[p];
-  const margin = S.n === 3 ? 1 : 2;                                  // 3명: 고박이 있어 상대 견제를 더 엄하게
-  if (now >= th * 12 && left <= 3) return { go: false };             // 배수가 이미 아주 크면 지킨다
+  const margin = S.n === 3 ? 1 : 2;                                  // 3 players: gobak exists, so respect threats more
+  if (now >= th * 12 && left <= 3) return { go: false };             // multipliers already huge → keep it
   if (S.n === 3 && now >= th * 6 && threat >= th - 2) return { go: false };
   return { go: threat <= th - margin };
 }
 
-/* ===================== 엔진 ===================== */
+/* ===================== Engine ===================== */
 export default {
   id: "gostop",
   name,
   icon: "🎴",
-  blurb: "화투 짝 맞추기! 2명은 맞고, 3명은 고스톱. 점수가 나면 고? 스톱?",
+  blurb: tx("화투 짝 맞추기! 2명은 맞고, 3명은 고스톱. 점수가 나면 고? 스톱?",
+    "Match hwatu flower cards by month! Matgo for 2, Go-Stop for 3. Once you score: Go on, or Stop?"),
   players: { min: 2, max: 3, default: 3 },
   settings: [
-    { key: "rounds", label: "판 수", values: [5, 10], labels: ["5판", "10판"], default: 5, note: "누적 점수로 순위를 정합니다" },
-    { key: "bonus", label: "보너스 피", values: [2, 0], labels: ["2장", "없음"], default: 2, note: "보너스 쌍피 1장 + 쓰리피 1장" }
+    { key: "rounds", label: tx("판 수", "Rounds"), values: [5, 10], labels: [tx("5판", "5"), tx("10판", "10")], default: 5,
+      note: tx("누적 점수로 순위를 정합니다", "Ranked by total score") },
+    { key: "bonus", label: tx("보너스 피", "Bonus pi"), values: [2, 0], labels: [tx("2장", "2 cards"), tx("없음", "None")], default: 2,
+      note: tx("보너스 쌍피 1장 + 쓰리피 1장", "One bonus double pi + one bonus triple pi") }
   ],
-  rules: `
+  rules: tx(`
     <h4>인원과 패</h4>
     <ul>
       <li><b>2명 = 맞고</b>: 손패 10장 · 바닥 8장 · <b>7점</b>부터 날 수 있습니다.</li>
@@ -509,7 +533,68 @@ export default {
     <h4>여러 판</h4>
     <ul>
       <li>정한 판 수(5 · 10판)를 하고 <b>누적 점수</b>로 순위를 정합니다. 첫 판 선은 무작위, 그다음은 이긴 사람이 선 (나가리면 그대로).</li>
-    </ul>`,
+    </ul>`, `
+    <p>Hwatu has 12 months (suits) of 4 cards each. Every card is a <b>Gwang</b> (광, bright), a <b>Tti</b> (띠, ribbon),
+      a <b>Yeolkkeut</b> (열끗, animal) or a <b>Pi</b> (피, junk). The month number is printed in the card's top-left corner.</p>
+    <h4>Players and cards</h4>
+    <ul>
+      <li><b>2 players = Matgo</b> (맞고): 10 cards in hand · 8 on the floor · you can win from <b>7 points</b>.</li>
+      <li><b>3 players = Go-Stop</b> (고스톱): 7 cards in hand · 6 on the floor · you can win from <b>3 points</b>.</li>
+      <li>48 hwatu cards (plus 2 <b>bonus pi</b> if enabled: one double pi, one triple pi). If all four cards of a month land on the floor, the cards are redealt.</li>
+      <li><b>Chongtong</b> (총통): all four cards of one month in your starting hand → you win that round at once (10 points).</li>
+    </ul>
+    <h4>A turn</h4>
+    <ul>
+      <li>Play one card from your hand. If the floor has 1 card of the same month you pair it; with 2 you <b>pick one</b> of them;
+        with 3 you take all four. Otherwise your card stays on the floor.</li>
+      <li>Then flip the top card of the draw pile and pair it the same way.</li>
+      <li><b>Jjok</b> (쪽): your played card found no pair, but the flipped card is the same month → take both and steal 1 pi from each opponent.</li>
+      <li><b>Ppeok</b> (뻑): you paired your card with 1 floor card, but the flipped card is the same month too → all 3 stay on the floor.
+        Whoever later takes all four with the last card of that month steals 1 pi from each opponent
+        (no steal for three of a month dealt to the floor at the start).</li>
+      <li><b>Ttadak</b> (따닥): you play onto 2 floor cards of a month and flip the fourth → take all 4 + 1 pi from each opponent.</li>
+      <li><b>Sseul</b> (쓸) — sweep: the floor is empty after your turn → 1 pi from each opponent (not on the last turn of the round).</li>
+      <li><b>Shake</b> (흔들기): holding 3 cards of a month that is not on the floor, show them as you play one → ×2 if you win.</li>
+      <li><b>Bomb</b> (폭탄): holding 3 cards of a month whose 4th card is on the floor, play all 3 at once → take all 4, steal 1 pi from each opponent,
+        ×2 if you win. Your hand shrinks by 2, so you get 2 <b>flip-only turns</b> (use them any time).</li>
+      <li><b>Bonus pi</b>: play it from your hand any time — it joins your pi and you draw a card, then you play a card as usual.
+        A bonus pi you flip is yours and you flip again. One dealt to the floor goes to the leader.</li>
+      <li>Stolen pi: a plain pi first; if there is none, a double pi (then a triple pi).</li>
+    </ul>
+    <h4>Scoring (always counted automatically from your captured cards)</h4>
+    <ul>
+      <li><b>Gwang</b>: 3 gwang 3 points (2 if one is the rain gwang) · 4 gwang 4 · 5 gwang 15.</li>
+      <li><b>Tti</b> (ribbons): 5 cards 1 point, +1 for each extra. <b>Hongdan</b> (홍단, red poem ribbons: months 1·2·3) · <b>Cheongdan</b>
+        (청단, blue ribbons: 6·9·10) · <b>Chodan</b> (초단, grass ribbons: 4·5·7) 3 points each. The December rain ribbon only counts toward the number of ribbons.</li>
+      <li><b>Yeolkkeut</b> (animals): 5 cards 1 point, +1 for each extra. <b>Godori</b> (고도리, the birds of months 2·4·8) 5 points.</li>
+      <li><b>Pi</b> (junk): 10 cards 1 point, +1 for each extra. A <b>Ssangpi</b> (쌍피, double junk) counts as 2, the bonus triple pi as 3.</li>
+      <li><b>Gukjin</b> (국진, the September animal): counts as an animal or a double pi — whichever scores more, automatically (animal on a tie).
+        A loser's gukjin counts as double pi, to help avoid pibak.</li>
+    </ul>
+    <h4>Go or Stop</h4>
+    <ul>
+      <li>When your turn ends with a score at or above the threshold, and higher than at your last Go, choose <b>Go</b> (고) or <b>Stop</b> (스톱).</li>
+      <li><b>Go</b>: the round goes on. 1 Go +1 point, 2 Go +2; from 3 Go, (score + number of Gos) ×2, 4 Go ×4, 5 Go ×8…</li>
+      <li><b>Stop</b>: you win the round and it ends. If you have no cards left to play, you stop automatically.</li>
+      <li>If nobody stops before all cards are played: <b>Nagari</b> (나가리) — no winner, no points, and the next round counts ×2
+        (consecutive nagari keep multiplying).</li>
+    </ul>
+    <h4>Settlement (each loser)</h4>
+    <ul>
+      <li>Payment = the winner's score (Go included) × the multipliers below.</li>
+      <li><b>Shake · Bomb</b>: ×2 for each one the winner made (a loser's shakes don't count).</li>
+      <li><b>Pibak</b> (피박): the winner scored with pi and the loser has fewer than 6 pi (0 included) → ×2.</li>
+      <li><b>Gwangbak</b> (광박): the winner scored with gwang and the loser has no gwang → ×2.</li>
+      <li><b>Meongbak</b> (멍박): the winner has 7 or more animals → ×2.</li>
+      <li><b>Gobak</b> (고박, 3 players): a loser who had called Go pays both losers' shares alone
+        (if both losers called Go, each pays their own). Matgo has no gobak.</li>
+      <li>After a nagari, the nagari multiplier applies too.</li>
+    </ul>
+    <h4>Several rounds</h4>
+    <ul>
+      <li>Play the chosen number of rounds (5 or 10); players are ranked by <b>total score</b>. The first leader is random;
+        after that the winner leads (unchanged after a nagari).</li>
+    </ul>`),
 
   setup({ n, seed, settings = {} }) {
     const S = {
@@ -529,20 +614,22 @@ export default {
   },
 
   validate(S, p, a) {
-    if (!this.pending(S).some(x => x.p === p)) return "지금은 내 차례가 아닙니다";
-    if (!a || typeof a !== "object") return "행동을 고르세요";
-    if (S.phase === "gostop") return typeof a.go === "boolean" ? true : "고 또는 스톱을 고르세요";
-    if (S.phase === "choose") return S.ch && S.ch.options.includes(a.take) ? true : "가져갈 바닥 카드를 고르세요";
+    if (!this.pending(S).some(x => x.p === p)) return tx("지금은 내 차례가 아닙니다", "It's not your turn");
+    if (!a || typeof a !== "object") return tx("행동을 고르세요", "Choose an action");
+    if (S.phase === "gostop") return typeof a.go === "boolean" ? true : tx("고 또는 스톱을 고르세요", "Choose Go or Stop");
+    if (S.phase === "choose") return S.ch && S.ch.options.includes(a.take) ? true : tx("가져갈 바닥 카드를 고르세요", "Pick the floor card to take");
     const hand = S.hands[p];
-    if (a.flip) return S.flips[p] > 0 ? true : "뒤집기만 하는 차례가 없습니다";
-    if (a.bonus !== undefined) return isBonus(a.bonus) && hand.includes(a.bonus) ? true : "그 보너스 피가 손에 없습니다";
-    if (!isCard(a.card) || !hand.includes(a.card)) return "손에 없는 카드입니다";
-    if (isBonus(a.card)) return "보너스 피는 따로 냅니다";
+    if (a.flip) return S.flips[p] > 0 ? true : tx("뒤집기만 하는 차례가 없습니다", "You have no flip-only turns");
+    if (a.bonus !== undefined) return isBonus(a.bonus) && hand.includes(a.bonus) ? true : tx("그 보너스 피가 손에 없습니다", "That bonus pi is not in your hand");
+    if (!isCard(a.card) || !hand.includes(a.card)) return tx("손에 없는 카드입니다", "That card is not in your hand");
+    if (isBonus(a.card)) return tx("보너스 피는 따로 냅니다", "Bonus pi is played separately");
     const m = monthOf(a.card), k = ofMonth(hand, m).length, f = ofMonth(S.floor, m).length;
-    if (a.bomb && a.shake) return "폭탄과 흔들기는 함께 할 수 없습니다";
-    if (a.bomb && !(k >= 3 && f === 1)) return "폭탄은 같은 월 3장을 들고 바닥에 나머지 1장이 있을 때만 됩니다";
-    if (a.shake && !(k >= 3 && f === 0)) return "흔들기는 같은 월 3장을 들고 바닥에 그 월이 없을 때만 됩니다";
-    if (a.shake && S.shook[p].some(x => x.m === m)) return "이미 흔든 월입니다";
+    if (a.bomb && a.shake) return tx("폭탄과 흔들기는 함께 할 수 없습니다", "You can't bomb and shake at once");
+    if (a.bomb && !(k >= 3 && f === 1)) return tx("폭탄은 같은 월 3장을 들고 바닥에 나머지 1장이 있을 때만 됩니다",
+      "A bomb needs 3 cards of a month in hand and its 4th card on the floor");
+    if (a.shake && !(k >= 3 && f === 0)) return tx("흔들기는 같은 월 3장을 들고 바닥에 그 월이 없을 때만 됩니다",
+      "A shake needs 3 cards of a month in hand and none of that month on the floor");
+    if (a.shake && S.shook[p].some(x => x.m === m)) return tx("이미 흔든 월입니다", "You already shook that month");
     return true;
   },
 
@@ -551,7 +638,7 @@ export default {
       if (a.go) {
         S.go[p]++;
         S.goScore[p] = scoreOf(S.caps[p]).total;
-        const ev = [{ type: "go", p, go: S.go[p], toast: true, text: `{${p}} 님 ${S.go[p]}고!` }];
+        const ev = [{ type: "go", p, go: S.go[p], toast: true, text: tx(`{${p}} 님 ${S.go[p]}고!`, `{${p}}: ${S.go[p]} Go!`) }];
         nextTurn(S, p);
         return ev;
       }
@@ -564,7 +651,7 @@ export default {
       else { capture(S, tp, [tp.d, a.take]); finishTurn(S, ev); }
       return ev;
     }
-    // validate 와 같은 순서로 해석한다 (뒤집기 → 보너스 → 카드)
+    // Interpret in the same order as validate (flip → bonus → card)
     if (a.flip) return playTurn(S, p, { flip: true });
     if (a.bonus !== undefined) return playBonus(S, p, a.bonus);
     return playTurn(S, p, { card: a.card, bomb: !!a.bomb, shake: !!a.shake });
@@ -572,14 +659,14 @@ export default {
 
   step(S) {
     if (S.phase !== "roundEnd") return [];
-    if (S.round >= S.rounds) { S.phase = "over"; return [{ type: "over", text: "모든 판이 끝났습니다" }]; }
+    if (S.round >= S.rounds) { S.phase = "over"; return [{ type: "over", text: tx("모든 판이 끝났습니다", "All rounds are finished") }]; }
     S.round++;
     return deal(S);
   },
 
   delay(S) { return S.phase === "roundEnd" ? (S.result && S.result.kind === "nagari" ? 4000 : 5500) : 1200; },
 
-  /* 손에 든 보너스 피 다음에 받은 카드는 본인만 안다 */
+  /* The card drawn after playing a bonus pi from the hand is known only to its owner */
   filterEvent(ev, p) {
     if (ev.type === "bonus" && ev.drew && p !== ev.p) return { ...ev, drew: null };
     return ev;
@@ -608,13 +695,15 @@ export default {
       return { total: s.total, gp: s.gp, tp: s.tp, yp: s.yp, pp: s.pp, g: s.g, t: s.t, y: s.y, pi: s.pi, items: s.items, guk: s.guk, sets: s.sets };
     });
     let status = "";
-    if (S.phase === "over") status = "게임 끝";
+    if (S.phase === "over") status = tx("게임 끝", "Game over");
     else if (S.phase === "roundEnd") {
-      const r = S.result;
-      status = r && r.kind === "nagari" ? `${S.round}판 나가리 — 다음 판 ×${S.nagari}` : r && r.kind === "chongtong" ? `${S.round}판 총통!` : `${S.round}판 끝 — 곧 다음 판`;
+      const r = S.result, k = S.round;
+      status = r && r.kind === "nagari" ? tx(`${k}판 나가리 — 다음 판 ×${S.nagari}`, `Nagari! Next round ×${S.nagari}`)
+        : r && r.kind === "chongtong" ? tx(`${k}판 총통!`, `Round ${k}: chongtong!`)
+        : tx(`${k}판 끝 — 곧 다음 판`, `Round ${k} over, next soon`);
     } else if (S.turn === me) {
-      status = S.phase === "choose" ? "가져갈 카드를 고르세요" : S.phase === "gostop" ? "고? 스톱?"
-        : S.hands[me].length ? "내 차례 — 낼 카드를 고르세요" : "내 차례 — 패를 뒤집으세요";
+      status = S.phase === "choose" ? tx("가져갈 카드를 고르세요", "Pick a card to take") : S.phase === "gostop" ? tx("고? 스톱?", "Go or Stop?")
+        : S.hands[me].length ? tx("내 차례 — 낼 카드를 고르세요", "Your turn — play a card") : tx("내 차례 — 패를 뒤집으세요", "Your turn — flip a card");
     }
     const copy = x => (x ? JSON.parse(JSON.stringify(x)) : null);
     return {
@@ -637,11 +726,11 @@ export default {
   results(S) {
     return S.totals.map((t, p) => ({
       p, rank: 1 + S.totals.filter(x => x > t).length, score: t,
-      note: `${t > 0 ? "+" : ""}${t}점 · ${S.wins[p]}승`
+      note: tx(`${t > 0 ? "+" : ""}${t}점 · ${S.wins[p]}승`, `${t > 0 ? "+" : ""}${plural(t, "pt", "pts")} · ${plural(S.wins[p], "win", "wins")}`)
     })).sort((a, b) => a.rank - b.rank);
   },
 
-  /* ---------- 시험용 ---------- */
+  /* ---------- For tests ---------- */
   randomAction(S, p, rng) {
     if (S.phase === "choose") return { take: pick(rng, S.ch.options) };
     if (S.phase === "gostop") return { go: rng() < 0.5 };
@@ -659,30 +748,30 @@ export default {
   check(S) {
     const all = [...S.hands.flat(), ...S.floor, ...S.deck, ...S.caps.flat()];
     const want = 48 + (S.bonus ? 2 : 0);
-    if (all.length !== want) return `카드 수가 맞지 않음 ${all.length} ≠ ${want}`;
+    if (all.length !== want) return `card count mismatch ${all.length} ≠ ${want}`;
     const seen = new Set();
     for (const id of all) {
-      if (!isCard(id)) return `모르는 카드 ${id}`;
-      if (seen.has(id)) return `카드 중복 ${id}`;
+      if (!isCard(id)) return `unknown card ${id}`;
+      if (seen.has(id)) return `duplicate card ${id}`;
       seen.add(id);
     }
-    if (!S.bonus && (seen.has("B2") || seen.has("B3"))) return "보너스 없음인데 보너스 피가 있음";
-    if (S.totals.reduce((a, b) => a + b, 0) !== 0) return "누적 점수의 합이 0 이 아님";
-    if (S.floor.some(isBonus)) return "바닥에 보너스 피가 있음";
+    if (!S.bonus && (seen.has("B2") || seen.has("B3"))) return "bonus pi present although bonus is off";
+    if (S.totals.reduce((a, b) => a + b, 0) !== 0) return "running totals do not sum to 0";
+    if (S.floor.some(isBonus)) return "bonus pi on the floor";
     if (S.phase === "choose") {
-      if (!S.tp || !S.ch || S.ch.options.length !== 2 || !S.ch.options.every(c => S.floor.includes(c))) return "고르기 상태가 이상함";
+      if (!S.tp || !S.ch || S.ch.options.length !== 2 || !S.ch.options.every(c => S.floor.includes(c))) return "bad choice state";
       return true;
     }
-    if (S.tp) return "차례가 끝났는데 진행 정보가 남음";
-    for (let m = 1; m <= 12; m++) if (ofMonth(S.floor, m).length > 3) return `바닥에 ${m}월 4장`;
-    for (const k of Object.keys(S.ppeok)) if (ofMonth(S.floor, +k).length !== 3) return `뻑 표시가 맞지 않음 (${k}월)`;
-    // 더미의 일반 카드 수 = 남은 차례 수 (손의 보너스는 바꿔 받을 한 장을 더 쓴다) → 더미가 모자라는 일이 없다
+    if (S.tp) return "turn finished but turn-in-progress data remains";
+    for (let m = 1; m <= 12; m++) if (ofMonth(S.floor, m).length > 3) return `four cards of month ${m} on the floor`;
+    for (const k of Object.keys(S.ppeok)) if (ofMonth(S.floor, +k).length !== 3) return `ppeok marker mismatch (month ${k})`;
+    // Plain cards in the pile = turns left (a bonus in hand uses one extra card as its replacement) → the pile never runs short
     const dn = S.deck.filter(c => !isBonus(c)).length;
     let need = 0;
     for (let p = 0; p < S.n; p++) need += S.hands[p].length + S.hands[p].filter(isBonus).length + S.flips[p];
-    if (dn !== need) return `더미 수가 맞지 않음 (일반 ${dn}장, 필요 ${need}장)`;
-    if ((S.phase === "play" || S.phase === "gostop") && turnsOf(S, S.turn) <= 0) return "차례인 사람에게 낼 패가 없음";
-    if (S.phase === "over" && S.round !== S.rounds) return "판 수가 맞지 않음";
+    if (dn !== need) return `draw pile mismatch (plain ${dn}, needed ${need})`;
+    if ((S.phase === "play" || S.phase === "gostop") && turnsOf(S, S.turn) <= 0) return "player to move has no cards to play";
+    if (S.phase === "over" && S.round !== S.rounds) return "round count mismatch";
     return true;
   },
   leak(S, p, v) {
@@ -697,9 +786,9 @@ export default {
       else if (x && typeof x === "object") Object.values(x).forEach(walk);
     };
     walk(v);
-    if (bad) return `숨은 카드 ${bad} 가 보임`;
-    if (JSON.stringify(sortCards(S.hands[p])) !== JSON.stringify(v.hand)) return "내 패가 맞지 않음";
-    if (typeof v.deck !== "number") return "더미가 숫자가 아님";
+    if (bad) return `hidden card ${bad} is visible`;
+    if (JSON.stringify(sortCards(S.hands[p])) !== JSON.stringify(v.hand)) return "own hand mismatch";
+    if (typeof v.deck !== "number") return "deck is not a number";
     return true;
   },
   stepLimit: 20000

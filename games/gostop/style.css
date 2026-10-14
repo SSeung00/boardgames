@@ -1,8 +1,8 @@
-/* 고스톱 — 접두어 gs- · 화투 카드 .hw (games/gostop/cards.js 의 hwHTML)
-   세로 배치: 상대 정보판 → 펠트(남는 높이를 모두, 바닥 카드 크기는 ui.js 가 재서 정함) → 내 정보판 → 안내 + 손패 */
+/* Go-Stop — prefix gs- · hwatu cards .hw (hwHTML in games/gostop/cards.js)
+   Vertical layout: opponents' panels → felt (all spare height; ui.js measures and sets the floor card size) → my panel → hint + hand */
 .gs{position:relative; height:100%; max-width:600px; margin:0 auto; display:flex; flex-direction:column; gap:4px; padding:4px 6px 0; overflow:hidden}
 
-/* ---------- 정보판 (나 · 상대 공통) ---------- */
+/* ---------- Panels (mine and opponents') ---------- */
 .gs-opps{flex:0 0 auto; display:flex; flex-direction:column; gap:4px}
 .gs-p{flex:0 0 auto; padding:3px 6px 3px; border-radius:10px; background:rgba(0,0,0,.32); border:1px solid var(--line); cursor:pointer; min-width:0}
 .gs-p.turn{border-color:var(--gold); box-shadow:0 0 0 1px var(--gold), 0 0 12px rgba(230,195,106,.28)}
@@ -25,7 +25,7 @@
 .gs-score{flex:0 0 auto; font-size:11px; color:var(--muted); margin-left:2px}
 .gs-score b{font-size:18px; color:var(--gold2); line-height:1}
 
-/* 진행 칸 8개: 광 · 띠 · 열끗 · 피 · 홍단 · 청단 · 초단 · 고도리 */
+/* 8 progress tiles: gwang · ribbon · animal · pi · hongdan · cheongdan · chodan · godori */
 .gs-tiles{display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:3px; margin-top:2px}
 .gs-ti{min-width:0; text-align:center; border-radius:6px; padding:1px 0 2px; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.08); line-height:1.1; position:relative}
 .gs-ti small{display:block; font-size:9.5px; line-height:12px; color:var(--muted); white-space:nowrap; overflow:hidden}
@@ -40,10 +40,10 @@
 .gs-ti.good b,.gs-ti.good small{color:#a6f5c5}
 .gs-ti.warn{background:rgba(224,121,74,.34); border-color:#ff9e6e; animation:gsWarn 1.6s ease-in-out infinite alternate}
 .gs-ti.warn b,.gs-ti.warn small{color:#ffd2bd}
-.gs-ti.bak::after{content:"박"; position:absolute; top:-4px; right:-3px; font-size:8.5px; font-weight:900; line-height:12px; padding:0 2px; border-radius:3px; background:var(--red); color:#fff}
+.gs-ti.bak::after{content:attr(data-bak); position:absolute; top:-4px; right:-3px; font-size:8.5px; font-weight:900; line-height:12px; padding:0 2px; border-radius:3px; background:var(--red); color:#fff}
 @keyframes gsWarn{to{box-shadow:0 0 8px rgba(255,140,90,.55)}}
 
-/* 3줄: 마지막 차례 · 위험 · 누적 */
+/* Row 3: last move · danger · running total */
 .gs-pf{display:flex; align-items:center; gap:4px; height:20px; margin-top:2px; font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden}
 .gs-lm{flex:1 1 auto; min-width:0; display:flex; align-items:center; gap:2px; overflow:hidden; border-radius:5px; padding:0 2px}
 .gs-lm.fresh{background:rgba(245,220,148,.14); box-shadow:inset 0 0 0 1px rgba(245,220,148,.35)}
@@ -58,7 +58,7 @@
 .gs-dg.opp{background:rgba(79,143,217,.3); color:#d3e5ff}
 .gs-tot{flex:0 0 auto; font-size:10.5px; color:var(--muted)}
 .gs-tot b{color:var(--ink)}
-/* 글자 크기 패 (마지막 차례) */
+/* Text-sized cards (last move) */
 .gs-tk{--mc:#333; --mb:#efe6cf; flex:0 0 auto; display:inline-flex; align-items:center; gap:1px; height:16px; padding:0 3px 0 2px; border-radius:3px; background:var(--mb);
   color:#5c533f; font-size:10px; font-weight:800; line-height:1; box-shadow:0 1px 1px rgba(0,0,0,.4)}
 .gs-tk b{color:var(--mc); font-size:11px; font-weight:900}
@@ -70,13 +70,13 @@
 .gs-tk.t-pp{box-shadow:inset 0 -2px 0 #3a3a3a, 0 1px 1px rgba(0,0,0,.4)}
 .gs-tk.t-b{--mb:#f0dcff; --mc:#7a3fc0}
 
-/* 내 먹은 패 (큰 화면에서만 — 작은 화면은 눌러서 본다) */
+/* My captured cards (large screens only — tap to see them on small screens) */
 .gs-piles{display:grid; grid-template-columns:1fr 1.25fr 1.15fr 1.7fr; gap:6px; margin-top:3px}
 .gs-pc{display:flex; height:31px; min-width:0; overflow:hidden; align-items:center}
 .gs.tall .gs-pc{height:37px}
 .gs.tall .gs-pc .hw.mini{--cw:24px; --ch:37px}
 
-/* ---------- 펠트: 더미 · 바닥 ---------- */
+/* ---------- Felt: draw pile · floor ---------- */
 .gs-table{flex:1 1 0; min-height:90px; border-radius:16px; position:relative; overflow:hidden;
   box-shadow:inset 0 0 0 2px rgba(230,195,106,.22), inset 0 10px 34px rgba(0,0,0,.4)}
 .gs-floor{position:absolute; inset:0; display:grid; justify-content:center; align-content:center; align-items:start; gap:8px 6px; padding:9px 8px}
@@ -97,7 +97,7 @@
 .gs-dk small{font-size:max(10px, calc(var(--fw,44px) * .2)); font-weight:700}
 .gs-nag{position:absolute; top:-6px; right:-6px; font-size:10.5px; font-weight:900; color:#fff; background:var(--red); border-radius:5px; padding:0 4px; line-height:16px; text-shadow:none}
 
-/* 고르기 */
+/* Choosing */
 .gs-pick{position:absolute; left:8px; right:8px; bottom:8px; z-index:6; padding:8px 10px 10px; border-radius:14px; background:rgba(8,20,14,.94); border:1px solid var(--gold);
   text-align:center; box-shadow:0 10px 30px rgba(0,0,0,.6); animation:rise .2s}
 .gs-pick-t{font-size:13px; margin-bottom:6px}
@@ -110,7 +110,7 @@
 .gs-pbtn:active .hw{transform:translateY(-4px)}
 .gold{color:var(--gold2)} .block{color:#9cc8ff} .bad{color:#ff9b8f}
 
-/* 쪽 · 뻑 · 고 같은 큰 글씨 */
+/* Big captions such as jjok · ppeok · go */
 .gs-banner{position:absolute; inset:0; display:grid; place-items:center; pointer-events:none; z-index:7}
 .gs-banner b{font-size:38px; font-weight:900; color:#fff; text-align:center; padding:0 12px; text-shadow:0 3px 0 rgba(0,0,0,.35), 0 0 24px rgba(0,0,0,.65); animation:gsPop 1.5s ease forwards}
 .gs-banner b.good{color:var(--gold2)}
@@ -118,7 +118,7 @@
 .gs-banner b.go{color:#ffd28a; font-size:46px}
 @keyframes gsPop{0%{transform:scale(.4); opacity:0} 15%{transform:scale(1.12); opacity:1} 25%{transform:scale(1)} 80%{opacity:1} 100%{opacity:0; transform:translateY(-14px)}}
 
-/* ---------- 판 결과 ---------- */
+/* ---------- Round result ---------- */
 .gs-over{position:absolute; top:8px; left:8px; right:8px; max-height:calc(100% - 16px); z-index:20; overflow-y:auto; padding:14px 14px 10px; border-radius:16px; background:rgba(12,22,17,.97); border:1px solid var(--line2);
   box-shadow:0 20px 60px rgba(0,0,0,.7); animation:fade .25s}
 .gs-over h3{margin:2px 0 8px; font-size:20px; line-height:1.3}
@@ -142,7 +142,7 @@
 .gs-ofoot small{color:var(--muted)}
 .gs-rcards{display:flex; gap:6px; justify-content:center; margin:6px 0}
 
-/* ---------- 안내 + 손패 ---------- */
+/* ---------- Hint + hand ---------- */
 .gs-dock{flex:0 0 auto; margin:0 -6px; padding:3px 6px 6px; background:linear-gradient(180deg,rgba(0,0,0,.2),rgba(0,0,0,.45)); border-top:1px solid var(--line)}
 .gs-hint{font-size:12.5px; line-height:16px; height:32px; color:var(--muted); text-align:center; overflow:hidden; display:flex; align-items:center; justify-content:center; padding:0 4px}
 .gs-hint > span{display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
@@ -163,7 +163,7 @@
 .gs-fl{position:absolute; left:0; right:0; top:0; height:calc(var(--hw,52px) * 1.55); display:grid; place-items:center; text-align:center; font-size:12px; font-weight:800; color:#fff; text-shadow:0 1px 2px #000; line-height:1.25; pointer-events:none}
 .gs-nohand{text-align:center; padding:14px 0; font-size:12.5px}
 
-/* 고/스톱 창 · 먹은 패 창 */
+/* Go/Stop dialog · captured-cards dialog */
 .gs-golist{margin:4px 0 0; padding-left:18px; font-size:13.5px; color:var(--muted); line-height:1.6}
 .gs-golist b{color:var(--ink)}
 .gs-mg{margin-top:10px}
@@ -171,12 +171,12 @@
 .gs-mgh b{color:var(--gold2)}
 .gs-mgc{display:flex; flex-wrap:wrap; gap:4px}
 
-/* 작은 화면 */
+/* Small screens */
 .gs.short .gs-hint{height:30px; font-size:12px; line-height:15px}
 .gs.short .gs-ph{height:21px}
 
-/* ---------- 화투 카드 ----------
-   크기는 --cw/--ch 로, 글자는 카드 폭에 비례 (font-size). 위 띠: 월 숫자(왼쪽) + 종류 표시(오른쪽) — 겹쳐 쌓아도 보인다. */
+/* ---------- Hwatu cards ----------
+   Size via --cw/--ch; text scales with the card width (font-size). Top strip: month number (left) + kind mark (right) — visible when stacked. */
 .hw{--cw:40px; --ch:62px; --mc:#333; --mb:#f3ead5; width:var(--cw); height:var(--ch); position:relative; flex:0 0 auto; overflow:hidden; display:block;
   border-radius:calc(var(--cw) * .12); font-size:calc(var(--cw) * .25); line-height:1; color:#2a2418; font-weight:700;
   background:linear-gradient(180deg,#fffcf3 0%,var(--mb) 100%); border:1px solid #b6a27a; box-shadow:0 2px 5px rgba(0,0,0,.45);
@@ -198,32 +198,32 @@
 .hw.m10,.gs-tk.m10{--mc:#c62d12; --mb:#fde0d4}
 .hw.m11,.gs-tk.m11{--mc:#2c6e5b; --mb:#dceee7}
 .hw.m12,.gs-tk.m12{--mc:#2c4f8c; --mb:#dfe6f3}
-.hw.m2 .hw-art{filter:hue-rotate(-30deg) saturate(1.8)}          /* 매조(매화)는 벚꽃보다 붉게 */
-/* 광 */
+.hw.m2 .hw-art{filter:hue-rotate(-30deg) saturate(1.8)}          /* plum (Feb) redder than cherry */
+/* Gwang */
 .hw.k-g{border:2px solid #c9961a}
 .hw.k-g .hw-k{background:radial-gradient(circle at 35% 30%,#fff1b0,#e0a91c 70%); color:#5a3600; box-shadow:0 0 0 1px #9b6f00}
 .hw.k-g .hw-l{background:#d39e17; color:#fff}
-/* 띠: 오른쪽 위 리본 + 아래 이름표 */
+/* Ribbons: ribbon top-right + name strip at the bottom */
 .hw.k-hong{--rb:#d42a2a} .hw.k-cheong{--rb:#245fc4} .hw.k-cho{--rb:#e66a52} .hw.k-rain{--rb:#8f3a3a}
 .hw.k-hong::after,.hw.k-cheong::after,.hw.k-cho::after,.hw.k-rain::after{content:""; position:absolute; top:.25em; right:.4em; width:.6em; height:1.45em; background:var(--rb);
   clip-path:polygon(0 0,100% 0,100% 100%,50% 80%,0 100%)}
 .hw.k-hong .hw-l,.hw.k-cheong .hw-l,.hw.k-cho .hw-l,.hw.k-rain .hw-l{background:var(--rb); color:#fff}
-/* 열끗 · 고도리 · 국진 */
+/* Animals · godori · gukjin */
 .hw.k-y .hw-k{background:#4f7a2a; color:#fff}
 .hw.k-go .hw-k{background:#fff; box-shadow:0 0 0 1px #4f7a2a; font-size:.72em}
 .hw.k-guk .hw-k{background:#a77c00; color:#fff}
 .hw.k-y .hw-l,.hw.k-go .hw-l,.hw.k-guk .hw-l{background:#557f2c; color:#fff}
 .hw.k-guk .hw-l{background:linear-gradient(90deg,#557f2c 50%,#3a3a3a 50%)}
-/* 쌍피 · 보너스 */
+/* Double pi · bonus */
 .hw.k-pp .hw-k{background:#2b2b2b; color:#fff}
 .hw.k-pp .hw-l{background:#3a3a3a; color:#fff}
 .hw.bonus{--mb:#f0dcff; --mc:#7a3fc0; border:2px solid #8c4fd0}
 .hw.bonus .hw-k{background:#8c4fd0; color:#fff}
 .hw.bonus .hw-l{background:#8c4fd0; color:#fff}
-/* 뒷면 */
+/* Back */
 .hw.back{background:repeating-linear-gradient(45deg,#b51f2b 0 4px,#951722 4px 8px); border:2px solid #f0d9a0}
 .hw.back i{position:absolute; inset:24% 16%; border-radius:50%; border:2px solid rgba(240,217,160,.55)}
-/* 크기 */
+/* Sizes */
 .hw.sm{--cw:26px; --ch:40px; border-radius:4px}
 .hw.md{--cw:36px; --ch:56px}
 .hw.lg{--cw:58px; --ch:90px}
@@ -234,7 +234,7 @@
 .hw.mini.k-p .hw-l{background:#cfc4ab}
 .hw.mini.k-pp .hw-k,.hw.mini.bonus .hw-k{display:grid; top:auto; bottom:1.1em; right:1px; font-size:8px; min-width:9px; height:9px; padding:0 1px}
 .hw.mini.k-g .hw-n{color:#9b6f00}
-/* 상태 */
+/* States */
 .hw.sel{transform:translateY(-8px); box-shadow:0 0 0 3px var(--gold2), 0 10px 18px rgba(0,0,0,.55)}
 .hw.can{box-shadow:0 0 0 2px rgba(92,196,137,.95), 0 2px 6px rgba(0,0,0,.45)}
 .hw.sel.can{box-shadow:0 0 0 3px var(--gold2), 0 10px 18px rgba(0,0,0,.55)}

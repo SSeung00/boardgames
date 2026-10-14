@@ -1,29 +1,36 @@
-/* 보석 상인 — 보석 토큰을 모아 개발 카드를 사고, 카드의 보너스(영구 할인)로 더 비싼 카드를 사며 점수를 쌓는다.
-   카드 90장(1단계 40 · 2단계 30 · 3단계 20)과 귀인 10명은 이 놀이방이 직접 만든 표다.
-   색 기호: w 다이아몬드 · b 사파이어 · g 에메랄드 · r 루비 · k 오닉스 · y 황금(만능). */
+/* Gem Merchant — collect gem tokens to buy development cards; each card's bonus (a permanent discount) helps buy
+   pricier cards while points pile up.
+   The 90 cards (tier 1: 40 · tier 2: 30 · tier 3: 20) and 10 nobles are our own tables.
+   Colour codes: w Diamond · b Sapphire · g Emerald · r Ruby · k Onyx · y Gold (wild). */
 import { shuffle, randInt, shuffleWith } from "../../core/rng.js";
+import { tx } from "../../core/i18n.js";
 
 export const COLORS = ["w", "b", "g", "r", "k"];
 export const ALL = [...COLORS, "y"];
-export const CNAME = { w: "다이아몬드", b: "사파이어", g: "에메랄드", r: "루비", k: "오닉스", y: "황금" };
+export const CNAME = {
+  w: tx("다이아몬드", "Diamond"), b: tx("사파이어", "Sapphire"), g: tx("에메랄드", "Emerald"),
+  r: tx("루비", "Ruby"), k: tx("오닉스", "Onyx"), y: tx("황금", "Gold")
+};
 const MAX_TOK = 10, MAX_RES = 3, MAX_ROUNDS = 80, GOLD_N = 5;
 const zero5 = () => ({ w: 0, b: 0, g: 0, r: 0, k: 0 });
 const zero6 = () => ({ w: 0, b: 0, g: 0, r: 0, k: 0, y: 0 });
 const tokSum = t => t.w + t.b + t.g + t.r + t.k + t.y;
+/* English plural: plural(2, "gem") → "2 gems" */
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
-/* ---------- 카드 표 ----------
-   틀 하나 = [점수, 자기 색, +1, +2, +3, +4 번째 색의 비용]. 색 순서(w→b→g→r→k)를 한 칸씩 돌려
-   다섯 색에 똑같이 적용한다 — 어느 색도 유리하지 않고, 색마다 요구되는 보석 총량이 같다. */
+/* ---------- Card table ----------
+   One template = [points, cost in own colour, cost in the colour +1, +2, +3, +4 steps on]. The colour order (w→b→g→r→k)
+   is rotated so the template applies equally to all five colours — no colour is favoured and each needs the same gem total. */
 const TIERS = [
-  [ // 1단계 (색마다 8장): 비용 합 3~5, 한 색 4개짜리만 1점
+  [ // tier 1 (8 per colour): cost total 3–5, only the single-colour 4-cost card scores 1
     [0, 0, 1, 1, 1, 1], [0, 0, 1, 1, 2, 0], [0, 0, 0, 1, 1, 1], [0, 0, 0, 0, 1, 2],
     [0, 0, 2, 0, 2, 1], [0, 1, 1, 0, 0, 2], [0, 0, 0, 3, 1, 1], [1, 0, 0, 0, 0, 4]
   ],
-  [ // 2단계 (색마다 6장): 1~3점, 비용 합 5~8, 자기 색 6개짜리 3점
+  [ // tier 2 (6 per colour): 1–3 points, cost total 5–8, the 6-of-own-colour card scores 3
     [1, 0, 3, 2, 0, 2], [1, 2, 0, 0, 3, 3], [2, 0, 0, 0, 5, 0],
     [2, 0, 1, 4, 0, 2], [2, 0, 0, 3, 0, 5], [3, 6, 0, 0, 0, 0]
   ],
-  [ // 3단계 (색마다 4장): 3~5점, 비용 합 7~13
+  [ // tier 3 (4 per colour): 3–5 points, cost total 7–13
     [3, 2, 3, 0, 4, 4], [4, 0, 7, 0, 0, 0], [4, 3, 0, 6, 0, 3], [5, 0, 0, 4, 6, 0]
   ]
 ];
@@ -35,8 +42,11 @@ TIERS.forEach((tpls, ti) => COLORS.forEach((c, ci) => tpls.forEach(tp => {
 })));
 const N_CARDS = CARDS.length;   // 90
 
-/* 귀인 10명 (각 3점): 한 칸 건너 두 색 4+4 다섯 명, 세 색 3+3+3 다섯 명 */
-const NOBLE_NAMES = ["왕비", "공작", "대상인", "선장", "대학자", "장군", "백작 부인", "왕자", "궁정 화가", "영주"];
+/* 10 nobles (3 points each): five need 4+4 of two colours one step apart, five need 3+3+3 of three colours */
+const NOBLE_NAMES = [
+  tx("왕비", "Queen"), tx("공작", "Duke"), tx("대상인", "Merchant Prince"), tx("선장", "Captain"), tx("대학자", "Sage"),
+  tx("장군", "General"), tx("백작 부인", "Countess"), tx("왕자", "Prince"), tx("궁정 화가", "Court Painter"), tx("영주", "Lord")
+];
 export const NOBLES = [];
 COLORS.forEach((c, i) => {
   const req = zero5(); req[c] = 4; req[COLORS[(i + 2) % 5]] = 4;
@@ -47,8 +57,8 @@ COLORS.forEach((c, i) => {
   NOBLES.push({ id: NOBLES.length, name: NOBLE_NAMES[NOBLES.length], req });
 });
 
-/* ---------- 계산 도우미 (화면도 같이 쓴다) ---------- */
-/* 살 수 있으면 낼 보석 {w..y}, 아니면 null. 같은 색 보석을 먼저 쓰고 모자란 만큼 황금 */
+/* ---------- Calculation helpers (shared with the UI) ---------- */
+/* Gems to pay {w..y} if affordable, else null. Uses same-colour gems first, gold for the rest */
 export function payFor(tok, bon, card) {
   const pay = zero6();
   let gold = 0;
@@ -63,7 +73,11 @@ export function payFor(tok, bon, card) {
 }
 export const qualifies = (bon, N) => COLORS.every(c => (bon[c] || 0) >= N.req[c]);
 const nobleRem = (bon, N) => { let r = 0; for (const c of COLORS) r += Math.max(0, N.req[c] - bon[c]); return r; };
-const tokText = t => ALL.filter(c => t[c]).map(c => CNAME[c] + (t[c] > 1 ? ` ${t[c]}` : "")).join("·");
+/* "Diamond 2·Ruby" in one language (l = "ko" | "en") */
+const tokText = (t, l) => ALL.filter(c => t[c]).map(c => CNAME[c][l] + (t[c] > 1 ? ` ${t[c]}` : "")).join(l === "ko" ? "·" : ", ");
+/* "1단계 다이아몬드" / "tier-1 Diamond" */
+const cardKo = C => `${C.t}단계 ${CNAME[C.c].ko}`;
+const cardEn = C => `tier-${C.t} ${CNAME[C.c].en}`;
 
 function findMarket(S, id) {
   for (let t = 0; t < 3; t++) { const i = S.market[t].indexOf(id); if (i >= 0) return [t, i]; }
@@ -85,7 +99,7 @@ function combos(arr, k) {
 }
 const isId = x => Number.isInteger(x) && x >= 0 && x < N_CARDS;
 
-/* 지금 둘 수 있는 모든 행동 */
+/* Every action that is legal right now */
 function legalMoves(S, p) {
   const P = S.players[p], out = [];
   const avail = COLORS.filter(c => S.bank[c] > 0);
@@ -108,7 +122,7 @@ function hasMove(S, p) {
   return P.res.some(r => payFor(P.tok, P.bon, CARDS[r.id]));
 }
 
-/* ---------- 차례 진행 ---------- */
+/* ---------- Turn flow ---------- */
 function afterMain(S, p, ev) {
   if (tokSum(S.players[p].tok) > MAX_TOK) { S.sub = "discard"; return; }
   nobleCheck(S, p, ev);
@@ -125,7 +139,9 @@ function visit(S, p, id, ev) {
   S.nobles.splice(S.nobles.indexOf(id), 1);
   P.nobles.push(id); P.pts += 3;
   if (S.last && S.last.p === p) S.last.noble = id;
-  ev.push({ type: "noble", p, noble: id, toast: true, text: `{${p}} 님에게 귀인 ‘${NOBLES[id].name}’이(가) 찾아왔습니다 (+3점)` });
+  const nm = NOBLES[id].name;
+  ev.push({ type: "noble", p, noble: id, toast: true,
+    text: tx(`{${p}} 님에게 귀인 ‘${nm.ko}’이(가) 찾아왔습니다 (+3점)`, `The ${nm.en} visits {${p}} (+3 pts)`) });
 }
 function endTurn(S, p, ev) {
   S.sub = null;
@@ -133,7 +149,9 @@ function endTurn(S, p, ev) {
   if (!S.final && P.pts >= S.goal) {
     S.final = true; S.trigger = p;
     const lastOne = (S.start + S.n - 1) % S.n;
-    ev.push({ type: "final", p, toast: true, text: p === lastOne ? `{${p}} 님이 ${P.pts}점에 닿았습니다!` : `{${p}} 님이 ${P.pts}점! 이번 바퀴를 마저 돌고 끝납니다` });
+    ev.push({ type: "final", p, toast: true, text: p === lastOne
+      ? tx(`{${p}} 님이 ${P.pts}점에 닿았습니다!`, `{${p}} reached ${P.pts} points!`)
+      : tx(`{${p}} 님이 ${P.pts}점! 이번 바퀴를 마저 돌고 끝납니다`, `{${p}} has ${P.pts} points! The game ends after this round`) });
   }
   S.turns++;
   S.turn = (p + 1) % S.n;
@@ -152,14 +170,18 @@ function standings(S) {
 function finish(S, ev, why) {
   S.phase = "over"; S.sub = null; S.why = why;
   const top = standings(S).filter(x => x.rank === 1).map(x => `{${x.p}}`);
-  const head = why === "stuck" ? "아무도 둘 수 없어 게임이 멈췄습니다 — " : why === "rounds" ? `${MAX_ROUNDS}바퀴가 지나 끝납니다 — ` : "게임 끝 — ";
-  ev.push({ type: "over", text: head + (top.length > 1 ? `${top.join(", ")} 님 공동 1등` : `${top[0]} 님 승리!`) });
+  const head = why === "stuck" ? tx("아무도 둘 수 없어 게임이 멈췄습니다 — ", "Nobody can move, so the game stops — ")
+    : why === "rounds" ? tx(`${MAX_ROUNDS}바퀴가 지나 끝납니다 — `, `${MAX_ROUNDS} rounds played — `)
+    : tx("게임 끝 — ", "Game over — ");
+  ev.push({ type: "over", text: top.length > 1
+    ? tx(head.ko + `${top.join(", ")} 님 공동 1등`, head.en + `${top.join(", ")} tie for 1st`)
+    : tx(head.ko + `${top[0]} 님 승리!`, head.en + `${top[0]} wins!`) });
 }
 
 /* =====================================================================
-   AI — 상태 S 를 바꾸지 않는다. 내 자리만 본뜬 작은 '상상 상태' s 위에서 행동을 굴려 보고
-   잠재 가치 phi(s) 가 가장 큰 행동을 고른다.
-   phi = 점수 + 보너스 가치 + 귀인 가능성 + (가까운 목표 카드 가치 × 할인율^남은 차례) + 보석 조금
+   AI — never changes the state S. It plays each action on a small "imagined state" s modelled on its own seat
+   and picks the action with the highest potential value phi(s).
+   phi = points + bonus value + noble prospects + (value of near target cards × discount^turns needed) + a little for gems
    ===================================================================== */
 function simOf(S, p) {
   const P = S.players[p];
@@ -176,7 +198,7 @@ function makeCtx(S, p, level) {
   const stage = Math.min(1, maxPts / S.goal);
   const ctx = {
     goal: S.goal, last: S.final, level,
-    bw: 0.25 + 0.9 * (1 - stage),        // 보너스 한 장의 기본 가치(점수 단위) — 초반일수록 크다
+    bw: 0.25 + 0.9 * (1 - stage),        // base value of one bonus (in points) — larger early in the game
     gam: 0.7, gn: 0.68, risk: 0.85, winB: 25, horizon: 10,
     race: level === "hard", oppRem: {}
   };
@@ -187,7 +209,7 @@ function makeCtx(S, p, level) {
   }
   return ctx;
 }
-/* 이 카드를 사기까지 보석 모으는 데 걸릴 차례 수 (어림) */
+/* Rough number of turns needed to collect the gems for this card */
 function turnsTo(card, s) {
   let def = 0, needTot = 0, lack = 0, slow = 0;
   const g = s.tok.y;
@@ -198,13 +220,13 @@ function turnsTo(card, s) {
     if (!d) continue;
     def += d;
     if (d > s.bank[c]) lack += d - s.bank[c];
-    const per = s.bank[c] >= 4 ? 2 : 1;               // 한 차례에 그 색을 몇 개까지 가져올 수 있나
+    const per = s.bank[c] >= 4 ? 2 : 1;               // how many of this colour one turn can take
     slow = Math.max(slow, Math.ceil(Math.max(0, d - g) / per));
   }
   if (def <= g) return 0;
   let t = Math.max(Math.ceil((def - g) / 3), slow);
-  if (lack > g) t += (lack - g) * 1.5;               // 은행에 없는 보석은 남이 돌려놓기를 기다려야 한다
-  if (needTot > MAX_TOK) t += needTot - MAX_TOK + 1;  // 보석 10개로는 못 사는 카드 — 보너스가 더 필요하다
+  if (lack > g) t += (lack - g) * 1.5;               // gems missing from the bank: wait for others to return them
+  if (needTot > MAX_TOK) t += needTot - MAX_TOK + 1;  // not buyable with 10 gems — more bonuses needed first
   return t;
 }
 function noblePot(bon, nobles, ctx) {
@@ -212,14 +234,14 @@ function noblePot(bon, nobles, ctx) {
   for (const id of nobles) {
     const rem = nobleRem(bon, NOBLES[id]);
     let v = 3 * Math.pow(ctx.gn, rem);
-    if (ctx.race && ctx.oppRem[id] < rem) v *= 0.45;   // 남이 더 가까운 귀인은 덜 쫓는다
+    if (ctx.race && ctx.oppRem[id] < rem) v *= 0.45;   // chase nobles less when an opponent is closer
     if (v > a) { c3 = b; b = a; a = v; } else if (v > b) { c3 = b; b = v; } else if (v > c3) c3 = v;
   }
   return a + 0.35 * b + 0.15 * c3;
 }
 function phi(s, ctx) {
   let nt = tokSum(s.tok);
-  if (ctx.last) return s.pts * 10 - s.ncards * 0.05 + nt * 0.001;   // 마지막 차례: 점수만 (같으면 카드 적게)
+  if (ctx.last) return s.pts * 10 - s.ncards * 0.05 + nt * 0.001;   // last turn: points only (fewer cards breaks ties)
   let v = s.pts + (s.pts >= ctx.goal ? ctx.winB + (s.pts - ctx.goal) : 0);
   let nb = 0;
   for (const c of COLORS) nb += s.bon[c];
@@ -243,7 +265,7 @@ function phi(s, ctx) {
   v += nt * 0.1 + s.tok.y * 0.15 - s.res.length * 0.25;
   return v;
 }
-/* 10개를 넘는 만큼 덜 아까운 보석부터 버린다 (s 를 바꾼다) → 버린 것 */
+/* Discard the excess over 10, least valuable gems first (mutates s) → the discarded gems */
 function bestDiscard(s, k, ctx) {
   const d = zero6();
   for (let i = 0; i < k; i++) {
@@ -275,7 +297,7 @@ function simApply(s, a, ctx, quick) {
     s.market.splice(s.market.indexOf(a.reserve), 1); s.res.push(a.reserve);
     if (s.bank.y > 0) { s.bank.y--; s.tok.y++; }
   } else if (a.reserveDeck !== undefined) {
-    s.decks[a.reserveDeck - 1]--; s.res.push(-1);         // 무슨 카드가 나올지는 모른다
+    s.decks[a.reserveDeck - 1]--; s.res.push(-1);         // the card drawn is unknown
     if (s.bank.y > 0) { s.bank.y--; s.tok.y++; }
   } else if (a.buy !== undefined) {
     const C = CARDS[a.buy], pay = payFor(s.tok, s.bon, C);
@@ -299,16 +321,16 @@ function simMoves(s) {
   for (const id of s.res) if (id >= 0 && payFor(s.tok, s.bon, CARDS[id])) out.push({ buy: id });
   return out;
 }
-/* 막아야 할 카드: 다음 차례 안에 상대가 사서 승리 점수에 닿는(또는 hard: 크게 다가가는) 펼쳐진 카드 → 가산점 */
+/* Cards worth blocking: face-up cards an opponent could buy next turn to reach the target (or, on hard, get much closer) → bonus */
 function threats(S, p, level) {
   const out = new Map();
   for (let k = 1; k < S.n; k++) {
     const q = (p + k) % S.n;
-    if (S.final && (q === S.start || ((q - S.start + S.n) % S.n) < ((p - S.start + S.n) % S.n))) continue;   // 이번 판에 더 둘 차례가 없다
+    if (S.final && (q === S.start || ((q - S.start + S.n) % S.n) < ((p - S.start + S.n) % S.n))) continue;   // no turn left this game
     const Q = S.players[q], wins = [], near = [];
     let winByRes = false;
     for (const r of Q.res) {
-      if (r.blind) continue;                                            // 남의 비공개 찜은 모른다
+      if (r.blind) continue;                                            // others' hidden reserves are unknown
       const C = CARDS[r.id];
       if (payFor(Q.tok, Q.bon, C) && Q.pts + C.pt + nobleGain(S, Q.bon, C.c) >= S.goal) winByRes = true;
     }
@@ -336,7 +358,7 @@ function nobleGain(S, bon, c) {
 
 function aiTurn(S, p, level, rng) {
   const moves = legalMoves(S, p);
-  if (level === "easy" && rng() < 0.2) {           // 쉬움: 가끔은 그냥 아무 보석이나
+  if (level === "easy" && rng() < 0.2) {           // easy: sometimes just take any gems
     const takes = moves.filter(a => a.take);
     if (takes.length) return takes[Math.floor(rng() * takes.length)];
   }
@@ -348,7 +370,7 @@ function aiTurn(S, p, level, rng) {
     if (a.reserve !== undefined && block.has(a.reserve)) v += block.get(a.reserve) * (ctx.last ? 10 : 1);
     return { a, s, v };
   });
-  if (level === "hard" && !ctx.last) {             // 어려움: 두 차례 앞을 본다 (내 다음 행동까지)
+  if (level === "hard" && !ctx.last) {             // hard: look two turns ahead (including my next action)
     scored.sort((x, y) => y.v - x.v);
     for (const x of scored.slice(0, 6)) {
       let v2 = -Infinity;
@@ -371,7 +393,7 @@ function aiDiscard(S, p, level, rng) {
 }
 function aiNoble(S, p) {
   const q = S.nobles.filter(id => qualifies(S.players[p].bon, NOBLES[id]));
-  // 다른 사람이 가장 가까이 와 있는 귀인을 데려온다 (빼앗기)
+  // take the noble an opponent is closest to (deny it)
   let best = q[0], bm = 99;
   for (const id of q) {
     let m = 99;
@@ -381,20 +403,22 @@ function aiNoble(S, p) {
   return { noble: best };
 }
 
-/* ---------- 보이는 정보 ---------- */
+/* ---------- Visible information ---------- */
 const cardV = id => (id === null || id === undefined ? null : { id, t: CARDS[id].t, c: CARDS[id].c, pt: CARDS[id].pt, cost: { ...CARDS[id].cost } });
 const nobleV = id => ({ id, name: NOBLES[id].name, req: { ...NOBLES[id].req } });
 
 export default {
   id: "gems",
-  name: "보석 상인",
+  name: tx("보석 상인", "Gem Merchant"),
   icon: "💎",
-  blurb: "보석을 모아 카드를 사고, 카드 보너스로 점점 싸게! 귀인을 모시고 먼저 승리 점수에 닿으세요.",
+  blurb: tx("보석을 모아 카드를 사고, 카드 보너스로 점점 싸게! 귀인을 모시고 먼저 승리 점수에 닿으세요.",
+    "Collect gems to buy cards, and let card bonuses make the next ones cheaper! Attract nobles and be first to reach the target score."),
   players: { min: 2, max: 4, default: 3 },
   settings: [
-    { key: "goal", label: "승리 점수", values: [15, 21], labels: ["15점", "21점"], default: 15, note: "누군가 닿으면 그 바퀴를 마저 돌고 끝납니다" }
+    { key: "goal", label: tx("승리 점수", "Points to win"), values: [15, 21], labels: [tx("15점", "15 pts"), tx("21점", "21 pts")], default: 15,
+      note: tx("누군가 닿으면 그 바퀴를 마저 돌고 끝납니다", "Once someone reaches it, the round is finished and the game ends") }
   ],
-  rules: `<ul>
+  rules: tx(`<ul>
     <li>보석은 다섯 가지 — <b>다이아몬드</b>(흰색) · <b>사파이어</b>(파랑) · <b>에메랄드</b>(초록) · <b>루비</b>(빨강) · <b>오닉스</b>(검정), 그리고 만능인 <b>황금</b>. 색마다 2인 4개 · 3인 5개 · 4인 7개, 황금은 5개.</li>
     <li>카드는 1~3단계로 나뉘어 단계마다 4장씩 펼쳐져 있습니다. 카드마다 <b>점수</b>(왼쪽 위), <b>보너스 보석</b>(오른쪽 위), <b>비용</b>(아래)이 있습니다.</li>
     <li>내 차례에는 다음 중 <b>하나만</b> 합니다.
@@ -412,7 +436,25 @@ export default {
   <ul>
     <li>살 때는 같은 색 보석을 먼저 쓰고 모자란 만큼만 황금을 씁니다 (자동 계산).</li>
     <li>할 수 있는 행동이 하나도 없으면 차례를 넘깁니다. 모두가 한 바퀴 내내 넘기거나 ${MAX_ROUNDS}바퀴가 지나면 그때 점수로 끝냅니다.</li>
-  </ul>`,
+  </ul>`, `<ul>
+    <li>There are five gems — <b>Diamond</b> (white) · <b>Sapphire</b> (blue) · <b>Emerald</b> (green) · <b>Ruby</b> (red) · <b>Onyx</b> (black) — plus wild <b>Gold</b>. Each colour has 4 tokens with 2 players, 5 with 3 and 7 with 4; there are 5 Gold.</li>
+    <li>Cards come in tiers 1–3, with 4 face up per tier. Each card shows <b>points</b> (top left), a <b>bonus gem</b> (top right) and a <b>cost</b> (bottom).</li>
+    <li>On your turn, do <b>exactly one</b> of these:
+      <ul>
+        <li>Take <b>3 gems of different colours</b> (if fewer than 3 colours are left, take one of each that remains)</li>
+        <li>Take <b>2 gems of the same colour</b> — only if <b>4 or more</b> of that colour are left</li>
+        <li><b>Reserve</b> — take a face-up card or the top card of a deck (hidden from others) and get 1 Gold if any is left. You may hold <b>up to 3</b> reserved cards</li>
+        <li><b>Buy</b> — a face-up card or one you reserved. Your cards' <b>bonuses reduce that colour's cost</b>, and Gold covers what is missing. Gems paid go back to the bank and the empty spot is refilled from the deck</li>
+      </ul></li>
+    <li>You may hold <b>at most 10 gems</b>. If you have more at the end of your turn, return gems of your choice down to 10.</li>
+    <li>When your bonuses meet a <b>noble</b>'s requirement (4+4 or 3+3+3), that noble visits at the end of your turn (<b>3 points</b>; one per turn — choose if several qualify).</li>
+    <li>When someone reaches the <b>target score</b>, the round is played out so everyone has had the same number of turns, then the game ends. Highest score wins; on a tie, the player who <b>bought fewer cards</b> ranks higher.</li>
+  </ul>
+  <h4>House rules</h4>
+  <ul>
+    <li>When buying, same-colour gems are spent first and Gold only covers the rest (calculated automatically).</li>
+    <li>If you have no legal action, your turn is skipped. If everyone passes for a whole round, or after ${MAX_ROUNDS} rounds, the game ends with the current scores.</li>
+  </ul>`),
   stepLimit: 5000,
 
   setup({ n, seed, settings }) {
@@ -436,70 +478,77 @@ export default {
   pending(S) {
     if (S.phase !== "play") return [];
     if (S.sub) return [{ p: S.turn, kind: S.sub }];
-    if (!hasMove(S, S.turn)) return [];          // 둘 수가 없으면 step 에서 넘긴다
+    if (!hasMove(S, S.turn)) return [];          // no legal action: step() passes the turn
     return [{ p: S.turn, kind: "turn" }];
   },
 
   validate(S, p, a) {
-    if (S.phase !== "play" || p !== S.turn) return "지금은 내 차례가 아닙니다";
-    if (!a || typeof a !== "object") return "행동을 고르세요";
+    if (S.phase !== "play" || p !== S.turn) return tx("지금은 내 차례가 아닙니다", "It's not your turn");
+    if (!a || typeof a !== "object") return tx("행동을 고르세요", "Choose an action");
     const P = S.players[p];
+    const badCount = tx("개수가 잘못되었습니다", "Invalid number of gems");
+    const unknown = tx("알 수 없는 보석입니다", "Unknown gem");
     if (S.sub === "discard") {
       const d = a.discard;
-      if (!d || typeof d !== "object") return "돌려놓을 보석을 고르세요";
+      if (!d || typeof d !== "object") return tx("돌려놓을 보석을 고르세요", "Choose gems to return");
       let sum = 0;
       for (const c in d) {
-        if (!ALL.includes(c)) return "알 수 없는 보석입니다";
+        if (!ALL.includes(c)) return unknown;
         const x = d[c];
-        if (!Number.isInteger(x) || x < 0) return "개수가 잘못되었습니다";
-        if (x > P.tok[c]) return `${CNAME[c]} 보석이 그만큼 없습니다`;
+        if (!Number.isInteger(x) || x < 0) return badCount;
+        if (x > P.tok[c]) return tx(`${CNAME[c].ko} 보석이 그만큼 없습니다`, `You don't have that many ${CNAME[c].en} gems`);
         sum += x;
       }
       const need = tokSum(P.tok) - MAX_TOK;
-      if (sum !== need) return `보석 ${need}개를 돌려놓아야 합니다`;
+      if (sum !== need) return tx(`보석 ${need}개를 돌려놓아야 합니다`, `You must return ${plural(need, "gem")}`);
       return true;
     }
     if (S.sub === "noble") {
-      if (!S.nobles.includes(a.noble) || !qualifies(P.bon, NOBLES[a.noble])) return "모실 수 있는 귀인을 고르세요";
+      if (!S.nobles.includes(a.noble) || !qualifies(P.bon, NOBLES[a.noble])) return tx("모실 수 있는 귀인을 고르세요", "Choose a noble you qualify for");
       return true;
     }
+    const resFull = tx("찜은 3장까지입니다", "You can reserve at most 3 cards");
     const keys = Object.keys(a).filter(k => ["take", "reserve", "reserveDeck", "buy"].includes(k));
-    if (keys.length !== 1) return "행동 하나를 고르세요";
+    if (keys.length !== 1) return tx("행동 하나를 고르세요", "Choose one action");
     if (keys[0] === "take") {
       const t = a.take;
-      if (!t || typeof t !== "object") return "가져올 보석을 고르세요";
+      const pick = tx("가져올 보석을 고르세요", "Choose gems to take");
+      if (!t || typeof t !== "object") return pick;
       const cs = Object.keys(t);
-      if (!cs.length) return "가져올 보석을 고르세요";
+      if (!cs.length) return pick;
       for (const c of cs) {
-        if (c === "y") return "황금은 카드를 찜할 때만 받습니다";
-        if (!COLORS.includes(c)) return "알 수 없는 보석입니다";
-        if (!Number.isInteger(t[c]) || t[c] < 1) return "개수가 잘못되었습니다";
+        if (c === "y") return tx("황금은 카드를 찜할 때만 받습니다", "Gold is only received when reserving a card");
+        if (!COLORS.includes(c)) return unknown;
+        if (!Number.isInteger(t[c]) || t[c] < 1) return badCount;
       }
       if (cs.length === 1 && t[cs[0]] === 2) {
-        if (S.bank[cs[0]] < 4) return `같은 색 2개는 4개 이상 남아 있을 때만 가져올 수 있습니다 (${CNAME[cs[0]]} ${S.bank[cs[0]]}개)`;
+        const c = cs[0];
+        if (S.bank[c] < 4) return tx(`같은 색 2개는 4개 이상 남아 있을 때만 가져올 수 있습니다 (${CNAME[c].ko} ${S.bank[c]}개)`,
+          `You can take 2 of the same colour only when 4 or more are left (${CNAME[c].en}: ${S.bank[c]})`);
         return true;
       }
-      if (cs.some(c => t[c] !== 1)) return "서로 다른 색 3개 또는 같은 색 2개만 가져올 수 있습니다";
-      for (const c of cs) if (S.bank[c] < 1) return `${CNAME[c]} 보석이 남아 있지 않습니다`;
+      if (cs.some(c => t[c] !== 1)) return tx("서로 다른 색 3개 또는 같은 색 2개만 가져올 수 있습니다", "Take either 3 different colours or 2 of the same colour");
+      for (const c of cs) if (S.bank[c] < 1) return tx(`${CNAME[c].ko} 보석이 남아 있지 않습니다`, `No ${CNAME[c].en} gems are left`);
       const avail = COLORS.filter(c => S.bank[c] > 0).length, need = Math.min(3, avail);
-      if (cs.length !== need) return need === 3 ? "서로 다른 색 3개를 고르세요" : `남은 색이 ${avail}가지라 서로 다른 색 ${need}개를 가져옵니다`;
+      if (cs.length !== need) return need === 3 ? tx("서로 다른 색 3개를 고르세요", "Choose 3 different colours")
+        : tx(`남은 색이 ${avail}가지라 서로 다른 색 ${need}개를 가져옵니다`, `Only ${plural(avail, "colour")} left, so take ${need} different`);
       return true;
     }
     if (keys[0] === "reserve") {
-      if (!isId(a.reserve) || !findMarket(S, a.reserve)) return "펼쳐진 카드만 찜할 수 있습니다";
-      if (P.res.length >= MAX_RES) return "찜은 3장까지입니다";
+      if (!isId(a.reserve) || !findMarket(S, a.reserve)) return tx("펼쳐진 카드만 찜할 수 있습니다", "You can only reserve face-up cards");
+      if (P.res.length >= MAX_RES) return resFull;
       return true;
     }
     if (keys[0] === "reserveDeck") {
       const t = a.reserveDeck;
-      if (![1, 2, 3].includes(t)) return "더미를 고르세요";
-      if (!S.decks[t - 1].length) return "더미가 비었습니다";
-      if (P.res.length >= MAX_RES) return "찜은 3장까지입니다";
+      if (![1, 2, 3].includes(t)) return tx("더미를 고르세요", "Choose a deck");
+      if (!S.decks[t - 1].length) return tx("더미가 비었습니다", "That deck is empty");
+      if (P.res.length >= MAX_RES) return resFull;
       return true;
     }
     const id = a.buy;
-    if (!isId(id) || (!findMarket(S, id) && !P.res.some(r => r.id === id))) return "펼쳐진 카드나 내가 찜한 카드만 살 수 있습니다";
-    if (!payFor(P.tok, P.bon, CARDS[id])) return "보석이 모자랍니다";
+    if (!isId(id) || (!findMarket(S, id) && !P.res.some(r => r.id === id))) return tx("펼쳐진 카드나 내가 찜한 카드만 살 수 있습니다", "You can only buy face-up cards or cards you reserved");
+    if (!payFor(P.tok, P.bon, CARDS[id])) return tx("보석이 모자랍니다", "Not enough gems");
     return true;
   },
 
@@ -509,7 +558,8 @@ export default {
       const d = zero6();
       for (const c of ALL) { const x = a.discard[c] | 0; if (x) { P.tok[c] -= x; S.bank[c] += x; d[c] = x; } }
       if (S.last && S.last.p === p) S.last.discard = d;
-      ev.push({ type: "discard", p, discard: d, text: `{${p}} 님이 보석 ${tokSum(d)}개를 돌려놓았습니다 (${tokText(d)})` });
+      ev.push({ type: "discard", p, discard: d,
+        text: tx(`{${p}} 님이 보석 ${tokSum(d)}개를 돌려놓았습니다 (${tokText(d, "ko")})`, `{${p}} returned ${plural(tokSum(d), "gem")} (${tokText(d, "en")})`) });
       S.sub = null;
       nobleCheck(S, p, ev);
       return ev;
@@ -524,7 +574,7 @@ export default {
       const t = zero6();
       for (const c in a.take) { P.tok[c] += a.take[c]; S.bank[c] -= a.take[c]; t[c] = a.take[c]; }
       S.last = { p, type: "take", take: t };
-      ev.push({ type: "take", p, take: t, text: `{${p}} 님이 보석을 가져왔습니다 — ${tokText(t)}` });
+      ev.push({ type: "take", p, take: t, text: tx(`{${p}} 님이 보석을 가져왔습니다 — ${tokText(t, "ko")}`, `{${p}} took gems — ${tokText(t, "en")}`) });
     } else if (a.reserve !== undefined) {
       const [t, i] = findMarket(S, a.reserve), C = CARDS[a.reserve];
       P.res.push({ id: a.reserve, blind: false });
@@ -532,14 +582,18 @@ export default {
       const gold = S.bank.y > 0;
       if (gold) { S.bank.y--; P.tok.y++; }
       S.last = { p, type: "reserve", card: a.reserve, gold };
-      ev.push({ type: "reserve", p, card: a.reserve, gold, text: `{${p}} 님이 ${C.t}단계 ${CNAME[C.c]} 카드${C.pt ? `(${C.pt}점)` : ""}를 찜했습니다${gold ? " · 황금 1개" : ""}` });
+      ev.push({ type: "reserve", p, card: a.reserve, gold,
+        text: tx(`{${p}} 님이 ${cardKo(C)} 카드${C.pt ? `(${C.pt}점)` : ""}를 찜했습니다${gold ? " · 황금 1개" : ""}`,
+          `{${p}} reserved a ${cardEn(C)} card${C.pt ? ` (${C.pt} pts)` : ""}${gold ? " · 1 Gold" : ""}`) });
     } else if (a.reserveDeck !== undefined) {
       const t = a.reserveDeck, id = S.decks[t - 1].pop();
       P.res.push({ id, blind: true });
       const gold = S.bank.y > 0;
       if (gold) { S.bank.y--; P.tok.y++; }
       S.last = { p, type: "reserveDeck", tier: t, card: id, gold };
-      ev.push({ type: "reserveDeck", p, tier: t, card: id, gold, text: `{${p}} 님이 ${t}단계 더미에서 한 장을 몰래 찜했습니다${gold ? " · 황금 1개" : ""}` });
+      ev.push({ type: "reserveDeck", p, tier: t, card: id, gold,
+        text: tx(`{${p}} 님이 ${t}단계 더미에서 한 장을 몰래 찜했습니다${gold ? " · 황금 1개" : ""}`,
+          `{${p}} secretly reserved a card from the tier-${t} deck${gold ? " · 1 Gold" : ""}`) });
     } else {
       const id = a.buy, C = CARDS[id], pay = payFor(P.tok, P.bon, C);
       for (const c of ALL) { P.tok[c] -= pay[c]; S.bank[c] += pay[c]; }
@@ -549,16 +603,17 @@ export default {
       P.cards.push(id); P.bon[C.c]++; P.pts += C.pt;
       S.last = { p, type: "buy", card: id, pay, from: m ? "market" : "res" };
       ev.push({ type: "buy", p, card: id, pay, from: m ? "market" : "res",
-        text: `{${p}} 님이 ${m ? "" : "찜해 둔 "}${C.t}단계 ${CNAME[C.c]} 카드를 샀습니다${C.pt ? ` (+${C.pt}점)` : ""}` });
+        text: tx(`{${p}} 님이 ${m ? "" : "찜해 둔 "}${cardKo(C)} 카드를 샀습니다${C.pt ? ` (+${C.pt}점)` : ""}`,
+          `{${p}} bought ${m ? "a" : "their reserved"} ${cardEn(C)} card${C.pt ? ` (+${C.pt} pts)` : ""}`) });
     }
     afterMain(S, p, ev);
     return ev;
   },
 
-  /* pending 이 빈 경우는 '둘 수 있는 행동이 없음' 뿐 — 넘긴다 */
+  /* pending is only empty when the player has no legal action — pass */
   step(S) {
     if (S.phase !== "play" || S.sub) return [];
-    const p = S.turn, ev = [{ type: "pass", p, text: `{${p}} 님은 할 수 있는 행동이 없어 차례를 넘깁니다` }];
+    const p = S.turn, ev = [{ type: "pass", p, text: tx(`{${p}} 님은 할 수 있는 행동이 없어 차례를 넘깁니다`, `{${p}} has no legal action and passes`) }];
     S.fresh = [];
     S.last = { p, type: "pass" };
     S.passes++;
@@ -587,7 +642,7 @@ export default {
       maxRounds: MAX_ROUNDS, sub: S.sub, why: S.why,
       bank: { ...S.bank },
       decks: S.decks.map(d => d.length),
-      market: S.market.map(row => row.map(cardV)),          // [0] = 1단계
+      market: S.market.map(row => row.map(cardV)),          // [0] = tier 1
       nobles: S.nobles.map(nobleV),
       players: S.players.map((P, q) => ({
         pts: P.pts, tok: { ...P.tok }, bon: { ...P.bon }, ncards: P.cards.length,
@@ -596,12 +651,13 @@ export default {
       })),
       fresh: S.fresh.slice(),
       last: last ? { ...JSON.parse(JSON.stringify(last)), cv: isId(last.card) ? cardV(last.card) : null } : null,
-      status: S.phase === "over" ? "게임 끝"
-        : p === S.turn ? (S.sub === "discard" ? "보석 돌려놓기" : S.sub === "noble" ? "귀인 고르기" : S.final ? "내 차례 — 마지막 차례!" : "내 차례") : ""
+      status: S.phase === "over" ? tx("게임 끝", "Game over")
+        : p === S.turn ? (S.sub === "discard" ? tx("보석 돌려놓기", "Return gems") : S.sub === "noble" ? tx("귀인 고르기", "Choose a noble")
+          : S.final ? tx("내 차례 — 마지막 차례!", "Your last turn!") : tx("내 차례", "Your turn")) : ""
     };
   },
 
-  /* 더미에서 몰래 찜한 카드는 본인만 안다 */
+  /* A card secretly reserved from a deck is known only to its owner */
   filterEvent(ev, p) {
     if (ev.type === "reserveDeck" && p !== ev.p) return { ...ev, card: null };
     return ev;
@@ -611,11 +667,13 @@ export default {
   results(S) {
     return standings(S).map(({ p, rank }) => {
       const P = S.players[p];
-      return { p, rank, score: P.pts, note: `카드 ${P.cards.length}장${P.nobles.length ? ` · 귀인 ${P.nobles.length}` : ""}` };
+      const nc = P.cards.length, nn = P.nobles.length;
+      return { p, rank, score: P.pts,
+        note: tx(`카드 ${nc}장${nn ? ` · 귀인 ${nn}` : ""}`, `${plural(nc, "card")}${nn ? ` · ${plural(nn, "noble")}` : ""}`) };
     });
   },
 
-  /* ---------- 시험용 ---------- */
+  /* ---------- For tests ---------- */
   randomAction(S, p, rng, kind) {
     const P = S.players[p];
     if (S.sub === "discard") {
@@ -637,31 +695,31 @@ export default {
   check(S) {
     for (const c of ALL) {
       let t = S.bank[c];
-      if (t < 0) return `은행 ${c} 가 음수`;
-      for (const P of S.players) { if (P.tok[c] < 0) return `${c} 보석이 음수`; t += P.tok[c]; }
+      if (t < 0) return `bank ${c} is negative`;
+      for (const P of S.players) { if (P.tok[c] < 0) return `${c} tokens negative`; t += P.tok[c]; }
       const init = c === "y" ? GOLD_N : S.per;
-      if (t !== init) return `${CNAME[c]} 총수 ${t} ≠ ${init}`;
+      if (t !== init) return `${CNAME[c].en} total ${t} ≠ ${init}`;
     }
     const seen = new Set();
     let dup = null;
     const add = id => { if (!isId(id) || seen.has(id)) dup = id; seen.add(id); };
     S.decks.forEach(d => d.forEach(add));
-    S.market.forEach((row, t) => row.forEach(id => { if (id !== null) { add(id); if (CARDS[id].t !== t + 1) dup = `단계 ${id}`; } }));
+    S.market.forEach((row, t) => row.forEach(id => { if (id !== null) { add(id); if (CARDS[id].t !== t + 1) dup = `tier ${id}`; } }));
     for (const P of S.players) { P.cards.forEach(add); P.res.forEach(r => add(r.id)); }
-    if (dup !== null) return `카드 중복 · 이상: ${dup}`;
-    if (seen.size !== N_CARDS) return `카드 수 ${seen.size} ≠ ${N_CARDS}`;
-    for (let t = 0; t < 3; t++) if (S.market[t].length !== 4 || (S.market[t].includes(null) && S.decks[t].length)) return `${t + 1}단계 빈자리를 채우지 않음`;
+    if (dup !== null) return `duplicate or invalid card: ${dup}`;
+    if (seen.size !== N_CARDS) return `card count ${seen.size} ≠ ${N_CARDS}`;
+    for (let t = 0; t < 3; t++) if (S.market[t].length !== 4 || (S.market[t].includes(null) && S.decks[t].length)) return `tier ${t + 1} gap not refilled`;
     const nb = new Set(S.nobles);
     for (const P of S.players) P.nobles.forEach(id => nb.add(id));
-    if (nb.size !== S.nobleN || S.nobles.length + S.players.reduce((a, P) => a + P.nobles.length, 0) !== S.nobleN) return "귀인 수가 맞지 않음";
+    if (nb.size !== S.nobleN || S.nobles.length + S.players.reduce((a, P) => a + P.nobles.length, 0) !== S.nobleN) return "noble count mismatch";
     for (let q = 0; q < S.n; q++) {
       const P = S.players[q];
-      if (P.res.length > MAX_RES) return `찜 ${P.res.length}장`;
-      if (tokSum(P.tok) > MAX_TOK && !(S.sub === "discard" && S.turn === q)) return `${q}번 보석 ${tokSum(P.tok)}개 (10개 초과)`;
+      if (P.res.length > MAX_RES) return `${P.res.length} reserved cards`;
+      if (tokSum(P.tok) > MAX_TOK && !(S.sub === "discard" && S.turn === q)) return `seat ${q} holds ${tokSum(P.tok)} gems (over 10)`;
       const bon = zero5(); let pts = 3 * P.nobles.length;
       for (const id of P.cards) { bon[CARDS[id].c]++; pts += CARDS[id].pt; }
-      if (COLORS.some(c => bon[c] !== P.bon[c])) return "보너스 계산이 틀림";
-      if (pts !== P.pts) return `점수 ${P.pts} ≠ ${pts}`;
+      if (COLORS.some(c => bon[c] !== P.bon[c])) return "bonus count mismatch";
+      if (pts !== P.pts) return `points ${P.pts} ≠ ${pts}`;
     }
     return true;
   },
@@ -673,17 +731,17 @@ export default {
     (function walk(o, path) {
       if (bad || !o || typeof o !== "object") return;
       if (Array.isArray(o)) { o.forEach((x, i) => walk(x, `${path}[${i}]`)); return; }
-      if (typeof o.id === "number" && o.cost && hidden.has(o.id)) { bad = `${path}: 숨은 카드 ${o.id}`; return; }
-      if (typeof o.card === "number" && hidden.has(o.card)) { bad = `${path}.card: 숨은 카드 ${o.card}`; return; }
+      if (typeof o.id === "number" && o.cost && hidden.has(o.id)) { bad = `${path}: hidden card ${o.id}`; return; }
+      if (typeof o.card === "number" && hidden.has(o.card)) { bad = `${path}.card: hidden card ${o.card}`; return; }
       for (const k in o) walk(o[k], `${path}.${k}`);
     })(v, "view");
     if (bad) return bad;
-    if (!Array.isArray(v.decks) || v.decks.some(x => typeof x !== "number")) return "더미 순서가 보임";
+    if (!Array.isArray(v.decks) || v.decks.some(x => typeof x !== "number")) return "deck order visible";
     for (let q = 0; q < S.n; q++) {
       if (q === p) continue;
       const blind = S.players[q].res.filter(r => r.blind).length;
       const shown = v.players[q].res.filter(r => r.hidden).length;
-      if (blind !== shown) return `${q}번의 비공개 찜 ${blind}장 ≠ 가린 ${shown}장`;
+      if (blind !== shown) return `seat ${q}: ${blind} blind reserves ≠ ${shown} hidden`;
     }
     return true;
   }

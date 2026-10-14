@@ -1,5 +1,5 @@
-/* 시드가 있는 난수 (mulberry32). 게임 상태 S.rs 에 32비트 상태를 둔다 — 같은 시드면 같은 게임.
-   AI 는 상태를 건드리지 않도록 따로 받은 rng() 함수를 쓴다. */
+/* Seeded random numbers (mulberry32). The 32-bit state lives in the game state as S.rs — same seed, same game.
+   AI must not touch the state, so it uses the separate rng() function it is given. */
 
 export function rand(S) {
   const a = (S.rs = (S.rs + 0x6D2B79F5) >>> 0);
@@ -18,13 +18,13 @@ export function shuffle(S, a) {
   return a;
 }
 
-/* 상태와 무관한 독립 난수 함수 (테스트에서 AI 에 넘긴다) */
+/* A standalone random function, independent of any game state (tests pass it to the AI) */
 export function makeRng(seed) {
   const S = { rs: seed >>> 0 };
   return () => rand(S);
 }
 
-/* rng() 로 배열 섞기 / 고르기 — AI 용 */
+/* Shuffle / pick with rng() — for AI code */
 export function shuffleWith(rng, a) {
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));

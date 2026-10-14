@@ -1,6 +1,6 @@
 .oc{height:100%; display:flex; flex-direction:column; position:relative}
 
-/* 카드 그림은 카드 크기(--cw)를 따라 커진다 */
+/* Card faces scale with the card size (--cw) */
 .oc .pc{border-radius:calc(var(--cw) * .09)}
 .oc .pc .pc-corner{font-size:calc(var(--cw) * .27); top:calc(var(--cw) * .05); left:calc(var(--cw) * .07)}
 .oc .pc .pc-corner i{font-size:calc(var(--cw) * .22)}
@@ -11,7 +11,7 @@
 .oc .pc.joker .pc-sub{font-size:calc(var(--cw) * .17); bottom:calc(var(--cw) * .06)}
 .oc .pc.back{border-width:calc(var(--cw) * .035 + 1px)}
 
-/* 작은 카드 (숫자 위 · 무늬 아래) */
+/* Small card (rank above · suit below) */
 .oc-mc{--mw:22px; width:var(--mw); height:calc(var(--mw) * 1.38); border-radius:calc(var(--mw) * .16); flex:0 0 auto;
   background:linear-gradient(180deg,#fffdf7,#ece5d4); color:#1b1b1b; box-shadow:0 1px 3px rgba(0,0,0,.45);
   display:inline-flex; flex-direction:column; align-items:center; justify-content:center; line-height:.95}
@@ -24,7 +24,7 @@
 .oc-r{color:#ff7d72}
 .oc-k{color:#fff}
 
-/* ---------- 상대 줄: 나 › A › B › 나 ---------- */
+/* ---------- Opponents row: me › A › B › me ---------- */
 .oc-opps{flex:0 0 auto; display:flex; align-items:stretch; justify-content:center; gap:1px; padding:9px 4px 3px}
 .oc-opp{flex:1 1 0; min-width:0; max-width:108px; position:relative; display:flex; flex-direction:column; align-items:center; gap:1px;
   padding:5px 3px 4px; border-radius:11px; background:rgba(0,0,0,.32); border:1px solid var(--line); transition:box-shadow .2s, background .2s}
@@ -68,7 +68,7 @@
 .oc.tall .oc-oc b{font-size:22px}
 @keyframes ocPop{40%{transform:scale(1.15)}}
 
-/* ---------- 판 ---------- */
+/* ---------- Table ---------- */
 .oc-table{--tc:110px; --mw:28px; flex:1 1 auto; min-height:0; margin:3px 8px 6px; border-radius:20px; position:relative; overflow:hidden;
   box-shadow:inset 0 0 0 2px rgba(230,195,106,.25), inset 0 10px 40px rgba(0,0,0,.4);
   display:flex; flex-direction:column; align-items:center; justify-content:space-evenly; padding:6px 8px; gap:4px}
@@ -99,7 +99,7 @@
 @keyframes ocIn{from{transform:translateY(-60px) scale(1.15) rotate(-8deg); opacity:0}}
 @keyframes ocBob{50%{transform:translateY(-4px)}}
 
-/* 지금 낼 수 있는 것 */
+/* What can be played now */
 .oc-info{word-break:keep-all; flex:0 1 auto; width:clamp(100px,31vw,152px); min-width:0; display:flex; flex-direction:column; align-items:center; text-align:center; gap:2px;
   padding:7px 6px; border-radius:14px; background:rgba(0,0,0,.26); border:1px solid rgba(255,255,255,.12)}
 .oc-i-lbl{font-size:11px; color:rgba(255,255,255,.72); line-height:1.2}
@@ -114,7 +114,7 @@
 .oc-info.need{border-color:var(--gold); background:rgba(230,195,106,.12)}
 .oc-i-k{margin-top:3px; padding:0 8px; border-radius:999px; border:1px solid var(--gold); color:var(--gold2); font-size:12px; font-weight:800}
 
-/* 최근 낸 카드 */
+/* Recently played cards */
 .oc-recent{--mw:inherit; display:flex; align-items:flex-start; justify-content:center; gap:3px; min-height:calc(var(--mw) * 1.38 + 18px)}
 .oc-recent .oc-mc{--mw:inherit}
 .oc-rl{align-self:center; margin-right:3px; font-size:10.5px; color:rgba(255,255,255,.55); writing-mode:vertical-rl; letter-spacing:.1em}
@@ -131,7 +131,7 @@
 .oc-log div:first-child{color:#f4f1e6; font-weight:600}
 @keyframes ocPulse{50%{box-shadow:0 0 0 3px rgba(217,83,79,.55), 0 0 18px rgba(217,83,79,.55)}}
 
-/* 원카드 창 — 판과 내 패 위를 덮는다 */
+/* "One card!" call window — covers the table and my hand */
 .oc-call{position:absolute; left:0; right:0; bottom:0; top:0; z-index:5; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px;
   background:rgba(8,14,10,.6); backdrop-filter:blur(2px); animation:fade .15s}
 .oc-callwho{font-size:16px; color:#fff; text-align:center; padding:0 12px}
@@ -154,7 +154,7 @@
 .oc-skip{background:none; border:1px solid rgba(255,255,255,.3); color:rgba(255,255,255,.85); border-radius:999px; padding:6px 22px; min-height:42px; font-size:14px}
 .oc-wait{font-size:13px; color:rgba(255,255,255,.7)}
 
-/* 짧은 알림 */
+/* Short flash message */
 .oc-flash{position:absolute; left:50%; top:8px; z-index:6; transform:translate(-50%,-10px); opacity:0; pointer-events:none; max-width:calc(100% - 20px);
   padding:5px 16px; border-radius:999px; background:rgba(0,0,0,.8); font-weight:800; font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   transition:opacity .2s, transform .2s}
@@ -163,7 +163,7 @@
 .oc-flash.good{color:var(--green)}
 .oc-flash.gold{color:var(--gold2)}
 
-/* ---------- 아래: 내 요약 · 안내 · 패 · 버튼 ---------- */
+/* ---------- Bottom: my summary · hint · hand · buttons ---------- */
 .oc-dock{padding:5px 8px calc(8px + env(safe-area-inset-bottom,0px))}
 .oc-me{display:flex; flex-wrap:wrap; justify-content:center; gap:4px}
 .oc-chip{font-size:12px; line-height:1.5; padding:0 8px; border-radius:999px; background:rgba(255,255,255,.07); border:1px solid var(--line); white-space:nowrap}
@@ -187,3 +187,7 @@
 .oc-suit.red{color:#e0524c}
 .oc.short .oc-dock .actions .btn{min-height:42px; padding:6px 10px}
 .oc-opps.many .oc-ai:not(.away){display:none}
+/* Two-suit requirement after a joker (♠♣ / ♥♦): smaller so it stays inside the info panel */
+.oc-i-big.suit.two{font-size:clamp(22px, calc(var(--tc) * .2), 38px); padding:0 8px; max-width:100%}
+/* English: "One card!" is wider than "원카드!" */
+.oc.en .oc-callbtn b{font-size:clamp(24px,7.2vw,33px)}

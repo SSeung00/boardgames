@@ -1,4 +1,5 @@
-/* 화면 공용 부품 — 저장소 · 소리 · 진동 · 알림 · 모달. 게임 화면 모듈은 ctx 로 이것들을 받는다. */
+/* Shared UI parts — storage, sound, vibration, toasts, modals. Game UI modules receive these through ctx. */
+import { L } from "./i18n.js";
 
 export const $ = id => document.getElementById(id);
 export function el(tag, cls, html) {
@@ -10,7 +11,7 @@ export function el(tag, cls, html) {
 export const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-/* ---------- 저장소 ---------- */
+/* ---------- Storage ---------- */
 export const LS = {
   get(k) { try { return localStorage.getItem("bg." + k); } catch (e) { return null; } },
   set(k, v) { try { localStorage.setItem("bg." + k, v); } catch (e) { } },
@@ -21,7 +22,7 @@ export const LS = {
 export const prefs = Object.assign({ name: "", sound: true }, LS.json("prefs", {}));
 export const savePrefs = () => LS.put("prefs", prefs);
 
-/* ---------- 소리 (합성 효과음) ---------- */
+/* ---------- Sound (synthesized effects) ---------- */
 let actx = null, noiseBuf = null;
 function ac() {
   if (!prefs.sound) return null;
@@ -62,7 +63,7 @@ export const sound = {
 };
 export const buzz = pattern => { try { if (prefs.sound && navigator.vibrate) navigator.vibrate(pattern); } catch (e) { } };
 
-/* ---------- 알림 ---------- */
+/* ---------- Toasts ---------- */
 let toastT = 0;
 export function toast(text, ms = 2600) {
   const t = $("toast");
@@ -76,8 +77,8 @@ export function stickyToast(text) {
   else if (t.classList.contains("sticky")) t.classList.remove("on", "sticky");
 }
 
-/* ---------- 모달 ----------
-   modal((box, close) => { ... }, {dismissible}) — close(value) 로 닫으면 promise 가 value 로 끝난다 */
+/* ---------- Modals ----------
+   modal((box, close) => { ... }, {dismissible}) — closing with close(value) resolves the promise with value */
 const stack = [];
 export function modal(build, opt = {}) {
   return new Promise(resolve => {
@@ -92,7 +93,7 @@ export function modal(build, opt = {}) {
     stack.push(entry);
     if (entry.dismissible) {
       scrim.addEventListener("click", e => { if (e.target === scrim) close(null); });
-      const x = el("button", "mclose", "✕"); x.setAttribute("aria-label", "닫기"); x.onclick = () => close(null);
+      const x = el("button", "mclose", "✕"); x.setAttribute("aria-label", L("닫기", "Close")); x.onclick = () => close(null);
       box.appendChild(x);
     }
     build(box, close);
@@ -113,7 +114,7 @@ export function buttonRow(box, buttons) {
   box.appendChild(row);
   return row;
 }
-/* 하나 고르기: options [{value, label, note?}] → value */
+/* Pick one: options [{value, label, note?}] → value */
 export function choose(title, text, options, opt = {}) {
   return modal((box, close) => {
     head(box, opt.eyebrow || "", title, text);
@@ -127,7 +128,7 @@ export function choose(title, text, options, opt = {}) {
   }, { dismissible: opt.dismissible !== false });
 }
 
-/* ---------- 이름표 ---------- */
+/* ---------- Avatars ---------- */
 const AVATAR_COLORS = ["#c9774a", "#5f9e6e", "#5b84c4", "#b05f9a", "#c4a24a", "#4aa3a8", "#8a6fc4", "#c45b5b", "#7a8a5a", "#a87a4a"];
 export const avatarColor = p => AVATAR_COLORS[p % AVATAR_COLORS.length];
 export function avatarHTML(name, p, extra = "") {

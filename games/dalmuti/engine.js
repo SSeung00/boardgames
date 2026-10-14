@@ -1,37 +1,49 @@
-/* 달무티 — 놀이방 엔진 모듈.
-   규칙은 rules.js (원본 dalmuti/web/engine.js 를 그대로 옮긴 것) 가 집행하고, 이 파일은 놀이방 진행기(core/host.js)의
-   pending / validate / apply / step 흐름에 맞춰 원본 온라인판(online.js 의 Host.run) 순서를 옮긴다.
+/* Dalmuti — game-room engine module.
+   The rules are enforced by rules.js (a verbatim port of the original dalmuti/web/engine.js). This file maps the
+   original online version's sequence (Host.run in online.js) onto the room runner's (core/host.js)
+   pending / validate / apply / step flow.
 
-   흐름: 자리 뽑기(step) → 딜(step) → [2라운드부터] 혁명 질문(후보에게만, 비밀) → 세금(상납 자동 → 달무티가 돌려줄 카드 고르기)
-        → 플레이(현재 차례 한 사람) → 라운드 끝(순위 보여 주기, step) → 다음 라운드 … → 끝
-   공정 규칙: 카드 카운터 없음 · 이번 판(트릭) 기록만 보여 준다 · 남의 세금 내용과 혁명 질문은 당사자에게만. */
+   Flow: seat draw (step) → deal (step) → [from round 2] revolution question (candidate only, secret) → tax (tribute is
+        automatic → the Dalmuti picks cards to give back) → play (one current player) → round end (show standings, step)
+        → next round … → over
+   Fair-play rules: no card counter · only the current trick's record is shown · other players' tax cards and the
+   revolution question are visible only to those involved. */
 import * as R from "./rules.js";
 import * as AI from "./ai.js";
+import { tx } from "../../core/i18n.js";
 
 const { JESTER, T, ACTIONS } = R;
-export const CARD_NAMES = ["달무티", "대주교", "남작부인", "수녀원장", "기사", "재봉사", "석공", "요리사", "양치기", "채석공", "소작농", "농노"];
-export const cardName = r => r === JESTER ? "광대" : CARD_NAMES[r - 1];
-export const TITLE_NAMES = ["평민", "대달무티", "소달무티", "상인", "소농노", "대농노"];
-const TITLE_SHORT = ["평민", "대달", "소달", "상인", "소농", "대농"];
+const CARD_KO = ["달무티", "대주교", "남작부인", "수녀원장", "기사", "재봉사", "석공", "요리사", "양치기", "채석공", "소작농", "농노"];
+const CARD_EN = ["Dalmuti", "Archbishop", "Baroness", "Abbess", "Knight", "Seamstress", "Mason", "Cook", "Shepherdess", "Stonecutter", "Peasant", "Serf"];
+export const CARD_NAMES = CARD_KO.map((k, i) => tx(k, CARD_EN[i]));
+export const cardName = r => r === JESTER ? tx("광대", "Jester") : CARD_NAMES[r - 1];
+export const TITLE_NAMES = [tx("평민", "Commoner"), tx("대달무티", "Greater Dalmuti"), tx("소달무티", "Lesser Dalmuti"),
+  tx("상인", "Merchant"), tx("소농노", "Lesser Peon"), tx("대농노", "Greater Peon")];
+const TITLE_SHORT = [tx("평민", "Comm."), tx("대달", "G.Dal"), tx("소달", "L.Dal"), tx("상인", "Merch."), tx("소농", "L.Peon"), tx("대농", "G.Peon")];
 
-/* 학습된 정책(어려움 AI)은 350KB 라서 방장이 게임을 시작할 때만 따로 불러온다. 불러오기 전에는 휴리스틱 '어려움'을 쓴다. */
+/* The learned policy (hard AI) is 350KB, so it is loaded separately only when the host starts a game.
+   Until it has loaded, the heuristic "hard" AI is used. */
 let POLICY = null, policyLoading = null;
 export function loadLearned() {
   if (!policyLoading) {
     policyLoading = import("./policy.js")
       .then(m => (POLICY = AI.loadPolicy(m.default)))
-      .catch(e => { console.warn("달무티 학습 정책을 불러오지 못했습니다", e); return null; });
+      .catch(e => { console.warn("Could not load the Dalmuti learned policy", e); return null; });
   }
   return policyLoading;
 }
 export const policyReady = () => !!POLICY;
-const HARD_TAU = 0.05;   // 원본 온라인판의 '어려움' 온도
+const HARD_TAU = 0.05;   // temperature of the original online version's "hard" level
 
-/* ---------- 도우미 ---------- */
+/* ---------- Helpers ---------- */
 const sizes = G => G.hands.map((_, p) => R.handSize(G, p));
-const label = r => r === JESTER ? "광대" : `${cardName(r)}(${r})`;
+const label = r => r === JESTER ? tx("광대", "Jester") : tx(`${cardName(r).ko}(${r})`, `${cardName(r).en} (${r})`);
+const cardsEn = n => `${n} card${n === 1 ? "" : "s"}`;
+const ordEn = n => n + (n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th");
+const PREP_TAX = tx("세금을 걷을 준비 중…", "Preparing to collect taxes…");
+const NOT_YOUR_TURN = tx("지금은 내 차례가 아닙니다", "It's not your turn");
 
-/* 행동 → 행동 번호. {id} 또는 {rank, plain, jesters} 또는 {pass:true}. 모양이 틀리면 null */
+/* Action → action id. Accepts {id}, {rank, plain, jesters} or {pass:true}; null if malformed */
 function toId(a) {
   if (!a || typeof a !== "object") return null;
   if (a.pass === true) return 0;
@@ -45,7 +57,7 @@ function revoltCandidate(S) {
   if (G.phase !== "revolution") return -1;
   return R.revolutionCandidate(G);
 }
-/* 혁명 질문을 받을 사람 (대농노는 묻지 않고 바로 대혁명 — 원본과 같다) */
+/* Who gets the revolution question (the Greater Peon is not asked — it is always a great revolution, as in the original) */
 function revoltAsk(S) {
   const c = revoltCandidate(S);
   return c >= 0 && S.g.titles[c] !== T.GP ? c : -1;
@@ -57,8 +69,10 @@ function startTax(S) {
   const G = S.g;
   R.skipRevolution(G);
   S.tax = { pairs: R.taxPairs(G).map(x => ({ ...x, up: null, down: null })), i: 0, stage: "up", done: false };
-  const t = S.tax.pairs.map(x => `{${x.peon}} → {${x.lord}} ${x.k}장`).join(", ");
-  return [{ type: "taxStart", pairs: S.tax.pairs.map(x => ({ peon: x.peon, lord: x.lord, k: x.k })), text: `세금: ${t || "없음"}` }];
+  const ko = S.tax.pairs.map(x => `{${x.peon}} → {${x.lord}} ${x.k}장`).join(", ");
+  const en = S.tax.pairs.map(x => `{${x.peon}} → {${x.lord}} ${cardsEn(x.k)}`).join(", ");
+  return [{ type: "taxStart", pairs: S.tax.pairs.map(x => ({ peon: x.peon, lord: x.lord, k: x.k })),
+    text: tx(`세금: ${ko || "없음"}`, `Tax: ${en || "none"}`) }];
 }
 function doRevolt(S, c) {
   const G = S.g;
@@ -66,31 +80,35 @@ function doRevolt(S, c) {
   S.trickLog = []; S.prevTrick = null;
   return [{
     type: "revolt", p: c, great, toast: true,
-    text: great ? `대혁명! 대농노 {${c}} 님이 광대 2장을 펼쳤습니다 — 서열이 뒤집힙니다`
-                : `혁명! {${c}} 님이 광대 2장을 펼쳤습니다 — 이번 라운드 세금 없음`
+    text: great ? tx(`대혁명! 대농노 {${c}} 님이 광대 2장을 펼쳤습니다 — 서열이 뒤집힙니다`,
+                     `Great revolution! Greater Peon {${c}} reveals both Jesters — the ranks are reversed`)
+                : tx(`혁명! {${c}} 님이 광대 2장을 펼쳤습니다 — 이번 라운드 세금 없음`,
+                     `Revolution! {${c}} reveals both Jesters — no tax this round`)
   }];
 }
 function dealRound(S) {
   const G = S.g;
   R.deal(G);
   S.tax = null; S.trickLog = []; S.prevTrick = null;
-  const ev = [{ type: "deal", round: G.round, text: `라운드 ${G.round} / ${G.rounds} — 카드를 나눴습니다` }];
+  const ev = [{ type: "deal", round: G.round, text: tx(`라운드 ${G.round} / ${G.rounds} — 카드를 나눴습니다`, `Round ${G.round} / ${G.rounds} — cards dealt`) }];
   if (G.phase === "play") ev.push({ type: "lead", p: R.current(G) });
   return ev;
 }
 
 const E = {
   id: "dalmuti",
-  name: "달무티",
+  name: tx("달무티", "Dalmuti"),
   icon: "👑",
-  blurb: "계급 사회 카드 게임. 같은 숫자를 같은 장수로, 더 낮은 숫자로 덮어 먼저 털면 다음 라운드의 왕이 됩니다.",
+  blurb: tx("계급 사회 카드 게임. 같은 숫자를 같은 장수로, 더 낮은 숫자로 덮어 먼저 털면 다음 라운드의 왕이 됩니다.",
+    "A card game of social rank. Beat each play with as many cards of a lower number — empty your hand first to rule the next round."),
   players: { min: 4, max: 8, default: 6 },
   settings: [
-    { key: "rounds", label: "라운드", values: [3, 5, 8], labels: ["3판", "5판", "8판"], default: 5, note: "라운드마다 n·n-1·…·1 점. 총점으로 순위" },
-    { key: "assist", label: "묶음 도우미", values: [true, false], labels: ["허용", "끄기"], default: true,
-      note: "켜면 숫자 묶음을 누를 때 필요한 광대까지 알아서 붙입니다" }
+    { key: "rounds", label: tx("라운드", "Rounds"), values: [3, 5, 8], labels: [tx("3판", "3"), tx("5판", "5"), tx("8판", "8")], default: 5,
+      note: tx("라운드마다 n·n-1·…·1 점. 총점으로 순위", "Each round scores n · n-1 · … · 1 points. Total score decides the ranking") },
+    { key: "assist", label: tx("묶음 도우미", "Jester helper"), values: [true, false], labels: [tx("허용", "On"), tx("끄기", "Off")], default: true,
+      note: tx("켜면 숫자 묶음을 누를 때 필요한 광대까지 알아서 붙입니다", "When on, tapping a number also adds the Jesters needed to match") }
   ],
-  rules: `<ul>
+  rules: tx(`<ul>
     <li>카드는 <b>1(달무티)부터 12(농노)까지</b> 숫자만큼 있고(1은 1장, 12는 12장) <b>광대 2장</b>을 더해 80장입니다. <b>숫자가 낮을수록 셉니다.</b></li>
     <li>첫 라운드는 한 장씩 뽑아 <b>가장 낮은 카드를 뽑은 사람</b>부터 앉고 선을 잡습니다.</li>
     <li>선은 <b>같은 숫자 여러 장</b>을 원하는 만큼 냅니다. 다음 사람은 <b>같은 장수</b>로 <b>더 낮은 숫자</b>를 내거나 패스합니다. 패스해도 다음에 다시 낼 수 있습니다.</li>
@@ -100,20 +118,30 @@ const E = {
     <li><b>세금</b>(2라운드부터): 대농노는 가장 낮은 숫자 2장을 대달무티에게, 소농노는 1장을 소달무티에게 바칩니다. 달무티는 아무 카드나 같은 장수를 돌려줍니다.</li>
     <li><b>혁명</b>: 카드를 받은 뒤 광대 2장을 모두 가진 사람은 혁명을 선언할 수 있습니다 — 그 라운드 세금이 없어집니다. 대농노가 선언하면 <b>대혁명</b>: 서열이 통째로 뒤집힙니다 (대농노는 항상 선언).</li>
     <li>공정 규칙: 남의 패 · 남의 세금 내용은 보이지 않고, <b>낸 카드 기록은 판마다 지워집니다</b> (카드 카운터 없음). 혁명 질문은 당사자만 봅니다.</li>
-  </ul>`,
+  </ul>`, `<ul>
+    <li>Each number from <b>1 (Dalmuti) to 12 (Serf)</b> has that many cards (one 1, twelve 12s), plus <b>2 Jesters</b> — 80 cards in all. <b>Lower numbers are stronger.</b></li>
+    <li>In the first round everyone draws one card; seats are taken from <b>the lowest card drawn</b>, and that player leads.</li>
+    <li>The leader plays <b>any number of cards of one number</b>. Each next player plays <b>the same number of cards</b> of a <b>lower number</b>, or passes. Passing doesn't stop you from playing later.</li>
+    <li>A <b>Jester</b> played with other cards counts as their number. Jesters played on their own count as 13 (the weakest).</li>
+    <li>When everyone except the last player to play has passed in a row, the trick ends and that player leads the next one.</li>
+    <li>In the order players empty their hands they become <b>Greater Dalmuti · Lesser Dalmuti · Merchant · Lesser Peon · Greater Peon</b>, and they sit in that order next round. Scoring: 1st gets n points, 2nd n-1 … last 1.</li>
+    <li><b>Tax</b> (from round 2): the Greater Peon gives their 2 lowest cards to the Greater Dalmuti, and the Lesser Peon gives 1 to the Lesser Dalmuti. The Dalmuti give back the same number of cards of their choice.</li>
+    <li><b>Revolution</b>: after the deal, a player holding both Jesters may declare a revolution — there is no tax that round. If the Greater Peon declares it, it is a <b>Great Revolution</b>: the whole ranking is turned upside down (the Greater Peon always declares).</li>
+    <li>Fair play: you can't see other hands or other players' tax cards, and <b>the record of played cards is cleared after every trick</b> (no card counting). Only the player concerned sees the revolution question.</li>
+  </ul>`),
 
   setup({ n, seed, settings = {} }) {
     const rounds = [3, 5, 8].includes(settings.rounds) ? settings.rounds : 5;
     const S = {
       n, rounds, assist: settings.assist !== false,
       g: R.create({ n, rounds, seed: seed | 0 }),
-      draw: null,          // 자리 뽑기 결과 {draws:[{p,rank}], order}
+      draw: null,          // seat draw result {draws:[{p,rank}], order}
       tax: null,           // {pairs:[{peon,lord,k,up,down}], i, stage:"up"|"return", done}
-      trickLog: [],        // 이번 판(트릭)에서 일어난 일 — 판이 끝나면 지운다 (공정 규칙)
-      prevTrick: null,     // 방금 끝난 판 {rank,plain,jesters,count,by,leader} — 다음 수까지 보여 준다
-      history: []          // 라운드 결과 [{round, finish, points}]
+      trickLog: [],        // what happened in the current trick — cleared when the trick ends (fair-play rule)
+      prevTrick: null,     // the trick that just ended {rank,plain,jesters,count,by,leader} — shown until the next play
+      history: []          // round results [{round, finish, points}]
     };
-    loadLearned();         // 방장 쪽에서만 불린다 — 첫 AI 차례 전까지 여유가 충분하다
+    loadLearned();         // only called on the host — there is plenty of time before the first AI turn
     return S;
   },
 
@@ -133,43 +161,43 @@ const E = {
 
   validate(S, p, a) {
     const G = S.g;
-    if (!a || typeof a !== "object") return "행동이 올바르지 않습니다";
+    if (!a || typeof a !== "object") return tx("행동이 올바르지 않습니다", "Invalid action");
     if (G.phase === "play") {
-      if (p !== R.current(G)) return "지금은 내 차례가 아닙니다";
+      if (p !== R.current(G)) return NOT_YOUR_TURN;
       const id = toId(a);
-      if (id === null) return "낼 카드를 고르세요";
+      if (id === null) return tx("낼 카드를 고르세요", "Choose cards to play");
       if (R.isLegal(G, id)) return true;
       const A = ACTIONS[id], h = G.hands[p];
-      if (A.pass) return "선은 패스할 수 없습니다 — 아무 조합이나 내세요";
-      if ((A.rank !== JESTER && h[A.rank] < A.plain) || h[JESTER] < A.jesters) return "가진 카드보다 많이 낼 수 없습니다";
+      if (A.pass) return tx("선은 패스할 수 없습니다 — 아무 조합이나 내세요", "The leader can't pass — play any set");
+      if ((A.rank !== JESTER && h[A.rank] < A.plain) || h[JESTER] < A.jesters) return tx("가진 카드보다 많이 낼 수 없습니다", "You can't play more cards than you have");
       const t = G.trick;
-      if (A.rank === JESTER) return "광대만으로는 선일 때만 낼 수 있습니다";
-      return `${t.count}장, ${t.rank}보다 낮은 숫자를 내야 합니다`;
+      if (A.rank === JESTER) return tx("광대만으로는 선일 때만 낼 수 있습니다", "Jesters alone can only be played when leading");
+      return tx(`${t.count}장, ${t.rank}보다 낮은 숫자를 내야 합니다`, `You must play ${cardsEn(t.count)} lower than ${t.rank}`);
     }
     if (G.phase === "revolution") {
-      if (p !== revoltAsk(S)) return "지금은 내 차례가 아닙니다";
-      if (typeof a.revolt !== "boolean") return "혁명 여부를 고르세요";
+      if (p !== revoltAsk(S)) return NOT_YOUR_TURN;
+      if (typeof a.revolt !== "boolean") return tx("혁명 여부를 고르세요", "Choose whether to declare a revolution");
       return true;
     }
     if (G.phase === "tax") {
       const x = curTax(S);
-      if (!x || p !== x.lord) return "지금은 내 차례가 아닙니다";
+      if (!x || p !== x.lord) return NOT_YOUR_TURN;
       const c = a.cards;
-      if (!Array.isArray(c) || c.length !== x.k) return `돌려줄 카드 ${x.k}장을 고르세요`;
-      if (!c.every(r => Number.isInteger(r) && r >= 1 && r <= 13)) return "카드가 올바르지 않습니다";
+      if (!Array.isArray(c) || c.length !== x.k) return tx(`돌려줄 카드 ${x.k}장을 고르세요`, `Choose ${cardsEn(x.k)} to give back`);
+      if (!c.every(r => Number.isInteger(r) && r >= 1 && r <= 13)) return tx("카드가 올바르지 않습니다", "Invalid cards");
       const need = new Array(14).fill(0);
       c.forEach(r => need[r]++);
-      for (let r = 1; r <= 13; r++) if (need[r] > G.hands[p][r]) return "가진 카드만 돌려줄 수 있습니다";
+      for (let r = 1; r <= 13; r++) if (need[r] > G.hands[p][r]) return tx("가진 카드만 돌려줄 수 있습니다", "You can only give back cards you hold");
       return true;
     }
-    return "지금은 둘 차례가 아닙니다";
+    return tx("지금은 둘 차례가 아닙니다", "It's not your turn to act");
   },
 
   apply(S, p, a) {
     const G = S.g;
     if (G.phase === "revolution") {
       if (a.revolt) return doRevolt(S, p);
-      // 감춘 사실은 본인만 안다
+      // only the player knows they kept the Jesters hidden
       return [{ type: "revoltNo", p, only: p }, ...startTax(S)];
     }
     if (G.phase === "tax") {
@@ -177,9 +205,10 @@ const E = {
       R.transfer(G, x.lord, x.peon, a.cards);
       x.down = a.cards.slice();
       S.tax.i++; S.tax.stage = "up";
-      return [{ type: "tax", dir: "down", from: x.lord, to: x.peon, n: x.k, ranks: a.cards.slice(), text: `{${x.lord}} 님이 {${x.peon}} 님에게 ${x.k}장을 돌려주었습니다` }];
+      return [{ type: "tax", dir: "down", from: x.lord, to: x.peon, n: x.k, ranks: a.cards.slice(),
+        text: tx(`{${x.lord}} 님이 {${x.peon}} 님에게 ${x.k}장을 돌려주었습니다`, `{${x.lord}} gives ${cardsEn(x.k)} back to {${x.peon}}`) }];
     }
-    // 플레이
+    // Play
     const id = toId(a), A = ACTIONS[id], before = G.trick;
     const r = R.act(G, id);
     const ev = [];
@@ -193,10 +222,12 @@ const E = {
     }
     if (r.finished) {
       const t = R.titleCode(r.finished - 1, G.n);
-      ev.push({ type: "out", p, place: r.finished, title: t, text: `{${p}} 님이 ${r.finished}번째로 패를 털었습니다 — ${TITLE_NAMES[t]}` });
+      ev.push({ type: "out", p, place: r.finished, title: t,
+        text: tx(`{${p}} 님이 ${r.finished}번째로 패를 털었습니다 — ${TITLE_NAMES[t].ko}`, `{${p}} goes out ${ordEn(r.finished)} — ${TITLE_NAMES[t].en}`) });
     }
     if (r.last !== undefined) {
-      ev.push({ type: "out", p: r.last, place: G.n, title: T.GP, last: true, text: `{${r.last}} 님이 마지막까지 남았습니다 — 대농노` });
+      ev.push({ type: "out", p: r.last, place: G.n, title: T.GP, last: true,
+        text: tx(`{${r.last}} 님이 마지막까지 남았습니다 — 대농노`, `{${r.last}} is left holding cards — Greater Peon`) });
     }
     if (r.trickEnd) {
       const t = A.pass ? before : G.trick;
@@ -205,7 +236,8 @@ const E = {
       ev.push({ type: "trickEnd", winner: r.trickEnd.winner, leader: r.trickEnd.leader });
     }
     if (r.roundEnd) {
-      ev.push({ type: "roundEnd", round: G.round, finish: G.finish.slice(), text: `라운드 ${G.round} 끝 — 1등 {${G.finish[0]}} 님` });
+      ev.push({ type: "roundEnd", round: G.round, finish: G.finish.slice(),
+        text: tx(`라운드 ${G.round} 끝 — 1등 {${G.finish[0]}} 님`, `Round ${G.round} won by {${G.finish[0]}}`) });
     }
     return ev;
   },
@@ -216,25 +248,28 @@ const E = {
       case "draw": {
         const r = R.seatingDraw(G);
         S.draw = r;
+        const lo = label(r.draws.find(d => d.p === r.order[0]).rank);
         return [{ type: "draw", draws: r.draws, order: r.order,
-          text: `자리 뽑기 — 가장 낮은 카드(${label(r.draws.find(d => d.p === r.order[0]).rank)})를 뽑은 {${r.order[0]}} 님이 첫 선` }];
+          text: tx(`자리 뽑기 — 가장 낮은 카드(${lo.ko})를 뽑은 {${r.order[0]}} 님이 첫 선`,
+                   `Seat draw — {${r.order[0]}} drew the lowest card (${lo.en}) and leads first`) }];
       }
       case "deal": return dealRound(S);
       case "revolution": {
         const c = revoltCandidate(S);
-        if (c >= 0) return doRevolt(S, c);          // 대농노는 늘 대혁명 (pending 에 없으므로 여기로 온다)
+        if (c >= 0) return doRevolt(S, c);          // the Greater Peon always declares a great revolution (not pending, so it lands here)
         return startTax(S);
       }
       case "tax": {
-        const tx = S.tax;
-        if (tx.i < tx.pairs.length) {
-          const x = tx.pairs[tx.i];
+        const tq = S.tax;
+        if (tq.i < tq.pairs.length) {
+          const x = tq.pairs[tq.i];
           const up = R.tribute(G, x.peon, x.k);
           R.transfer(G, x.peon, x.lord, up);
-          x.up = up; tx.stage = "return";
-          return [{ type: "tax", dir: "up", from: x.peon, to: x.lord, n: x.k, ranks: up.slice(), text: `{${x.peon}} 님이 {${x.lord}} 님에게 ${x.k}장을 바쳤습니다` }];
+          x.up = up; tq.stage = "return";
+          return [{ type: "tax", dir: "up", from: x.peon, to: x.lord, n: x.k, ranks: up.slice(),
+            text: tx(`{${x.peon}} 님이 {${x.lord}} 님에게 ${x.k}장을 바쳤습니다`, `{${x.peon}} pays ${cardsEn(x.k)} in tribute to {${x.lord}}`) }];
         }
-        tx.done = true;
+        tq.done = true;
         R.finishTax(G);
         S.trickLog = []; S.prevTrick = null;
         return [{ type: "taxDone" }, { type: "lead", p: R.current(G) }];
@@ -244,7 +279,7 @@ const E = {
         S.history.push({ round: sum.round, finish: sum.finish, points: sum.points });
         const ev = [{ type: "round", ...sum }];
         if (G.phase === "deal") ev.push(...dealRound(S));
-        else ev.push({ type: "over", text: "게임 끝" });
+        else ev.push({ type: "over", text: tx("게임 끝", "Game over") });
         return ev;
       }
     }
@@ -255,10 +290,10 @@ const E = {
     const G = S.g;
     switch (G.phase) {
       case "draw": return 700;
-      case "deal": return 4800;                                  // 자리 뽑기 결과를 보여 준다
-      case "revolution": return 1400 + Math.random() * 1200;     // 혁명 후보가 있든 없든 비슷한 시간 (광대 2장의 존재를 숨긴다)
+      case "deal": return 4800;                                  // show the seat draw result
+      case "revolution": return 1400 + Math.random() * 1200;     // similar wait with or without a candidate (hides who holds both Jesters)
       case "tax": return S.tax && S.tax.i < S.tax.pairs.length ? 1300 : 1100;
-      case "roundEnd": return 5500;                              // 라운드 순위 · 새 계급 보여 주기
+      case "roundEnd": return 5500;                              // show the round standings and new titles
     }
     return 800;
   },
@@ -267,7 +302,7 @@ const E = {
     const G = S.g;
     if (kind === "revolt") return { revolt: false };
     if (kind === "return") { const x = curTax(S); return { cards: R.giveBackDefault(G, p, x ? x.k : 0) }; }
-    // 따라갈 땐 패스, 선이면 무난한 수 (원본과 같다)
+    // pass when following, a sensible play when leading (same as the original)
     if (G.trick) return { pass: true };
     return { id: AI.normal(G, p, () => 0.99) };
   },
@@ -322,15 +357,16 @@ const E = {
   over(S) { return S.g.phase === "over"; },
 
   results(S) {
-    const G = S.g, last = G.seats;   // 동점이면 마지막 라운드 순위가 앞선 사람
+    const G = S.g, last = G.seats;   // ties: whoever placed higher in the last round comes first
     const order = [...Array(G.n).keys()].sort((a, b) => G.scores[b] - G.scores[a] || last.indexOf(a) - last.indexOf(b));
-    return order.map((p, i) => ({
-      p, rank: i + 1, score: G.scores[p],
-      note: "라운드별: " + S.history.map(h => TITLE_SHORT[R.titleCode(h.finish.indexOf(p), G.n)]).join(" → ")
-    }));
+    return order.map((p, i) => {
+      const ts = S.history.map(h => TITLE_SHORT[R.titleCode(h.finish.indexOf(p), G.n)]);
+      return { p, rank: i + 1, score: G.scores[p],
+        note: tx("라운드별: " + ts.map(t => t.ko).join(" → "), "By round: " + ts.map(t => t.en).join(" → ")) };
+    });
   },
 
-  /* ---------- 시험용 ---------- */
+  /* ---------- For tests ---------- */
   randomAction(S, p, rng, kind) {
     const G = S.g;
     if (G.phase === "revolution") return { revolt: rng() < 0.5 };
@@ -347,34 +383,34 @@ const E = {
 
   check(S) {
     const G = S.g;
-    const dealt = G.phase !== "draw" && G.phase !== "deal";   // 자리 뽑기 직후(deal)까지는 아무도 카드가 없다
+    const dealt = G.phase !== "draw" && G.phase !== "deal";   // nobody holds cards until the deal (through the "deal" phase)
     for (let r = 1; r <= 13; r++) {
       let s = G.played[r];
-      for (let p = 0; p < G.n; p++) { if (G.hands[p][r] < 0) return `음수 카드 p${p} r${r}`; s += G.hands[p][r]; }
+      for (let p = 0; p < G.n; p++) { if (G.hands[p][r] < 0) return `negative card count p${p} r${r}`; s += G.hands[p][r]; }
       const want = dealt ? R.TOTAL(r) : 0;
-      if (s !== want) return `숫자 ${r} 카드 수가 맞지 않음: ${s} (기대 ${want})`;
+      if (s !== want) return `wrong number of ${r} cards: ${s} (expected ${want})`;
     }
     let total = 0;
     for (let p = 0; p < G.n; p++) total += R.handSize(G, p);
     for (let r = 1; r <= 13; r++) total += G.played[r];
-    if (total !== (dealt ? 80 : 0)) return `카드 총수 ${total}`;
-    // 점수: 라운드 기록의 합과 같아야 하고, 끝난 라운드마다 n(n+1)/2 점이 나간다
+    if (total !== (dealt ? 80 : 0)) return `card total ${total}`;
+    // Scores must equal the sum of the round records, and every finished round hands out n(n+1)/2 points
     const sum = new Array(G.n).fill(0);
     for (const h of S.history) {
-      if (h.finish.length !== G.n || new Set(h.finish).size !== G.n) return `라운드 ${h.round} 순위가 이상함`;
+      if (h.finish.length !== G.n || new Set(h.finish).size !== G.n) return `round ${h.round}: bad finishing order`;
       for (let i = 0; i < G.n; i++) {
-        if (h.points[i] !== G.n - i) return `라운드 ${h.round} ${i + 1}등 점수 ${h.points[i]}`;
+        if (h.points[i] !== G.n - i) return `round ${h.round}: place ${i + 1} scored ${h.points[i]}`;
         sum[h.finish[i]] += h.points[i];
       }
     }
-    if (sum.some((s, q) => s !== G.scores[q])) return `점수가 라운드 기록과 다름 ${G.scores} vs ${sum}`;
-    if (S.history.length !== G.round - 1) return `라운드 기록 수 ${S.history.length} ≠ ${G.round - 1}`;
+    if (sum.some((s, q) => s !== G.scores[q])) return `scores differ from round records ${G.scores} vs ${sum}`;
+    if (S.history.length !== G.round - 1) return `round record count ${S.history.length} ≠ ${G.round - 1}`;
     const tot = G.scores.reduce((a, b) => a + b, 0);
-    if (tot !== S.history.length * G.n * (G.n + 1) / 2) return `점수 총합 ${tot}`;
-    if (new Set(G.finish).size !== G.finish.length) return "같은 사람이 두 번 빠져나감";
+    if (tot !== S.history.length * G.n * (G.n + 1) / 2) return `score total ${tot}`;
+    if (new Set(G.finish).size !== G.finish.length) return "the same player went out twice";
     if (G.phase === "play") {
-      for (const q of G.finish) if (R.handSize(G, q)) return `빠져나간 p${q} 에게 카드가 남음`;
-      if (!R.handSize(G, R.current(G))) return "카드 없는 사람의 차례";
+      for (const q of G.finish) if (R.handSize(G, q)) return `p${q} went out but still holds cards`;
+      if (!R.handSize(G, R.current(G))) return "turn given to a player without cards";
     }
     return true;
   },
@@ -383,15 +419,15 @@ const E = {
     const G = S.g;
     const ALLOWED = ["me", "n", "phase", "round", "rounds", "assist", "seats", "titles", "scores", "sizes", "finish", "passed", "lastAct",
       "trick", "prevTrick", "trickLog", "turn", "reveal", "draw", "tax", "ask", "hand", "history", "status"];
-    for (const k of Object.keys(v)) if (!ALLOWED.includes(k)) return `알 수 없는 view 항목 ${k}`;
-    if (JSON.stringify(v.hand) !== JSON.stringify(G.hands[p])) return "내 패가 view 와 다름";
-    if (JSON.stringify(v).includes('"hands"') || JSON.stringify(v).includes('"played"')) return "남의 패 / 나온 카드 집계가 view 에 있음";
-    if (v.tax) for (const t of v.tax.pairs) if (t.peon !== p && t.lord !== p && (t.up || t.down)) return "남의 세금 내용이 보임";
+    for (const k of Object.keys(v)) if (!ALLOWED.includes(k)) return `unknown view key ${k}`;
+    if (JSON.stringify(v.hand) !== JSON.stringify(G.hands[p])) return "my hand differs from the view";
+    if (JSON.stringify(v).includes('"hands"') || JSON.stringify(v).includes('"played"')) return "other hands / played-card counts in the view";
+    if (v.tax) for (const t of v.tax.pairs) if (t.peon !== p && t.lord !== p && (t.up || t.down)) return "someone else's tax cards are visible";
     if (v.ask) {
-      if (v.ask.kind === "revolt" && revoltAsk(S) !== p) return "남의 혁명 질문이 보임";
-      if (v.ask.kind === "return" && (!curTax(S) || curTax(S).lord !== p)) return "남의 하사 질문이 보임";
+      if (v.ask.kind === "revolt" && revoltAsk(S) !== p) return "someone else's revolution question is visible";
+      if (v.ask.kind === "return" && (!curTax(S) || curTax(S).lord !== p)) return "someone else's give-back question is visible";
     }
-    if (G.phase === "revolution" && revoltAsk(S) !== p && v.status !== "세금을 걷을 준비 중…") return "혁명 후보 여부가 상태 줄로 드러남";
+    if (G.phase === "revolution" && revoltAsk(S) !== p && JSON.stringify(v.status) !== JSON.stringify(PREP_TAX)) return "status line reveals the revolution candidate";
     return true;
   },
   stepLimit: 30000
@@ -400,21 +436,23 @@ const E = {
 function statusFor(S, p, turn, ask) {
   const G = S.g, rd = `${Math.min(G.round, G.rounds)}/${G.rounds}R`;
   switch (G.phase) {
-    case "draw": return "자리 뽑기 준비";
-    case "deal": return "자리를 정했습니다 — 곧 카드를 나눕니다";
-    case "revolution": return ask ? "광대 2장! 혁명을 선언할까요?" : "세금을 걷을 준비 중…";
+    case "draw": return tx("자리 뽑기 준비", "Getting ready to draw seats");
+    case "deal": return tx("자리를 정했습니다 — 곧 카드를 나눕니다", "Seats are set — dealing soon");
+    case "revolution": return ask ? tx("광대 2장! 혁명을 선언할까요?", "Both Jesters! Declare a revolution?") : PREP_TAX;
     case "tax": {
       const x = curTax(S);
-      if (x) return x.lord === p ? `돌려줄 카드 ${x.k}장을 고르세요` : `{${x.lord}} 님이 돌려줄 카드를 고르는 중`;
-      return `${rd} · 세금`;
+      if (x) return x.lord === p ? tx(`돌려줄 카드 ${x.k}장을 고르세요`, `Choose ${cardsEn(x.k)} to give back`)
+                                 : tx(`{${x.lord}} 님이 돌려줄 카드를 고르는 중`, `{${x.lord}} is choosing cards to give back`);
+      return tx(`${rd} · 세금`, `${rd} · Tax`);
     }
     case "play": {
-      if (turn !== p) return `${rd} · {${turn}} 님 차례`;
+      if (turn !== p) return tx(`${rd} · {${turn}} 님 차례`, `${rd} · {${turn}}'s turn`);
       const t = G.trick;
-      return t ? `${rd} · 내 차례 — ${t.count}장, ${t.rank}보다 낮게` : `${rd} · 내 차례 — 선 (아무 조합)`;
+      return t ? tx(`${rd} · 내 차례 — ${t.count}장, ${t.rank}보다 낮게`, `${rd} · Your turn — ${cardsEn(t.count)}, lower than ${t.rank}`)
+               : tx(`${rd} · 내 차례 — 선 (아무 조합)`, `${rd} · Your lead (any set)`);
     }
-    case "roundEnd": return `라운드 ${G.round} 끝 — 1등 {${G.finish[0]}} 님`;
-    case "over": return "게임 끝";
+    case "roundEnd": return tx(`라운드 ${G.round} 끝 — 1등 {${G.finish[0]}} 님`, `Round ${G.round} won by {${G.finish[0]}}`);
+    case "over": return tx("게임 끝", "Game over");
   }
   return "";
 }

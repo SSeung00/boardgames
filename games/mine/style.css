@@ -1,7 +1,7 @@
-/* 금광 탐험 — 흙빛 굴 판. 클래스 접두어 mn- */
+/* Gold Mine — earthy tunnel board. Class prefix mn- */
 .mn{height:100%; display:flex; flex-direction:column; background:linear-gradient(180deg,#1b130c,#110b06)}
 
-/* 이름표 격자: 5명까지 한 줄, 6명부터 두 줄. 칸마다 이름 / 손패 · 금 · 고장 / 마지막 행동 */
+/* Name-chip grid: one row up to 5 players, two rows from 6. Each chip: name / hand · gold · broken tools / last action */
 .mn-seats{flex:0 0 auto; display:grid; grid-template-columns:repeat(var(--cols,5),minmax(0,1fr)); gap:4px; padding:5px 6px 3px}
 .mn-chip{min-width:0; display:flex; flex-direction:column; align-items:stretch; gap:1px; padding:3px 5px 3px; border-radius:9px; text-align:left;
   background:rgba(0,0,0,.32); border:1px solid var(--line); font-size:11.5px; line-height:1.3; position:relative}
@@ -16,6 +16,8 @@
 .mn-seats.tight .mn-chip{padding:2px 4px; font-size:11px}
 .mn-seats.tight .mn-chip .l2{gap:3px; font-size:10.5px}
 .mn-seats.tight .mn-chip .l3{font-size:10px; letter-spacing:-.02em}
+.mn-seats.tight .mn-rtag{padding:0 3px; font-size:10px}
+.mn-seats.tight .mn-gain{font-size:10px}
 .mn-chip.turn{border-color:var(--gold); box-shadow:0 0 0 1px var(--gold), 0 0 12px rgba(230,195,106,.35); background:rgba(230,195,106,.1)}
 .mn-chip.me{background:rgba(92,196,137,.1); border-color:rgba(92,196,137,.45)}
 .mn-chip.me.turn{border-color:var(--gold)}
@@ -25,7 +27,7 @@
 .mn-chip.mn-acted{animation:mnHit .6s ease}
 .mn-g{color:var(--gold2)}
 .mn-gain{color:var(--gold2); font-size:11px}
-/* 행동 배지 색: 길(금빛) · 해로운 일(빨강) · 수리(초록) · 지도(파랑) · 버림(회색) */
+/* Action badge colours: path (gold) · harmful (red) · repair (green) · map (blue) · discard (grey) */
 .mn-k{color:var(--muted)}
 .mn-k.path{color:var(--gold2)}
 .mn-k.bad{color:#ff8a7e}
@@ -40,7 +42,7 @@
 .mn-rtag.s{background:rgba(217,83,79,.25); color:#ff9b8f}
 .mn-hit{animation:mnHit .7s ease}
 
-/* 내 정보 줄 */
+/* My info line */
 .mn-bar{flex:0 0 auto; display:flex; align-items:center; gap:6px; padding:2px 6px; font-size:12.5px; color:var(--muted)}
 .mn-me{flex:1; min-width:0; display:flex; align-items:center; gap:8px; white-space:nowrap; overflow:hidden}
 .mn-me b{color:var(--ink)}
@@ -53,7 +55,7 @@
 .mn-zb{min-width:36px; height:32px; border-radius:9px; border:1px solid var(--line2); background:rgba(255,255,255,.06); font-size:16px; font-weight:700; padding:0 8px; flex:0 0 auto}
 .mn-zb:disabled{opacity:.35}
 
-/* 목표까지 남은 칸 */
+/* Cells left to each goal */
 .mn-goals{flex:0 0 auto; display:flex; align-items:center; gap:6px; padding:2px 6px 4px}
 .mn-gl{flex:1; min-width:0; display:flex; align-items:center; gap:4px; white-space:nowrap; overflow:hidden; font-size:12px; color:var(--muted)}
 .mn-gl .lead{font-size:11px; color:var(--faint)}
@@ -65,7 +67,7 @@
 .mn-gp.cut{color:#ff8a7e}
 .mn-zoom{display:flex; gap:4px; flex:0 0 auto}
 
-/* 판 + 기록: 판은 내용 높이만큼, 남는 높이는 기록이 쓴다 */
+/* Board + log: the board takes its content height, the log gets the rest */
 .mn-body{flex:1 1 0; min-height:0; position:relative; display:flex; flex-direction:column}
 .mn-mid{flex:0 1 auto; min-height:0; position:relative; margin:0 6px}
 .mn-frame{position:absolute; inset:0; overflow:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; touch-action:pan-x pan-y; display:grid; border-radius:12px; padding:2px;
@@ -107,7 +109,7 @@
 .mn-spot.map.pre{animation:none; opacity:.6}
 .mn-ghost{opacity:.9; z-index:1; pointer-events:none; box-shadow:0 0 0 2px var(--green), 0 6px 14px rgba(0,0,0,.6)}
 
-/* 이번 라운드 기록 */
+/* This round's log */
 .mn-log{flex:1 1 0; min-height:0; overflow-y:auto; margin:4px 6px 0; padding:0 2px; font-size:12.5px; color:var(--muted)}
 .mn-lstick{position:sticky; top:0; z-index:1; background:#140e08}
 .mn-lhead{display:flex; justify-content:space-between; gap:8px; padding:3px 4px; font-size:11px; color:var(--faint); background:#140e08; border-bottom:1px solid var(--line); white-space:nowrap; overflow:hidden}
@@ -120,9 +122,9 @@
 .mn-log li b{color:var(--ink); max-width:72px; overflow:hidden; text-overflow:ellipsis; flex:0 0 auto}
 .mn-log li .mn-k{overflow:hidden; text-overflow:ellipsis}
 
-/* 손패 · 버튼 */
+/* Hand · buttons */
 .mn-dock{padding-top:4px}
-.mn-dock .hint{margin:0 0 2px; font-size:12.5px; line-height:1.35; height:2.7em; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical}   /* 두 줄 고정: 글이 바뀌어도 판이 흔들리지 않게 */
+.mn-dock .hint{margin:0 0 2px; font-size:12.5px; line-height:1.35; height:2.7em; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical}   /* fixed two lines: the board doesn't jump when the text changes */
 .mn-hand{position:relative; display:flex; justify-content:center; gap:5px; padding:8px 0 4px}
 .mn-card{position:relative; flex:0 0 auto; width:min(66px, calc((100% - (var(--hn, 6) - 1) * 5px) / var(--hn, 6))); min-width:0; aspect-ratio:50/66; padding:3px 2px 2px; border-radius:8px; border:1px solid rgba(230,195,106,.35); background:linear-gradient(180deg,#3d2a1a,#2a1c11);
   display:flex; flex-direction:column; align-items:center; justify-content:space-between; gap:1px; transition:transform .15s, box-shadow .15s, opacity .15s}
@@ -139,22 +141,22 @@
 .mn-card.dim > span{filter:grayscale(.7)}
 .mn-card.sel{transform:translateY(-8px); box-shadow:0 0 0 2px var(--gold2), 0 8px 14px rgba(0,0,0,.5); opacity:1}
 .mn-cnt{position:absolute; top:-6px; right:-5px; min-width:18px; height:18px; padding:0 4px; border-radius:9px; background:var(--green); color:#062313; font:800 11px/18px var(--font); font-style:normal; box-shadow:0 1px 3px rgba(0,0,0,.6)}
-.mn-why{position:absolute; left:2px; right:2px; bottom:2px; padding:1px 0; border-radius:4px; background:rgba(120,25,20,.92); color:#ffd2cc; font-size:9.5px; font-style:normal; font-weight:700; line-height:1.25; text-align:center; white-space:nowrap; overflow:hidden}
-.mn-acts{display:flex; gap:6px; justify-content:safe center; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:none}   /* 한 줄 고정 (대상이 많으면 옆으로 밀기) */
+.mn-why{position:absolute; left:2px; right:2px; bottom:2px; padding:1px 0; border-radius:4px; background:rgba(120,25,20,.92); color:#ffd2cc; font-size:9.5px; font-style:normal; font-weight:700; line-height:1.2; text-align:center; overflow:hidden; word-break:keep-all}   /* long labels wrap at spaces instead of being clipped */
+.mn-acts{display:flex; gap:6px; justify-content:safe center; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:none}   /* single row (swipe sideways when there are many targets) */
 .mn-acts::-webkit-scrollbar{display:none}
 .mn-acts .btn{flex:1 1 auto; min-width:64px}
 .mn-acts .mn-tg{flex:0 0 auto; white-space:nowrap; display:inline-flex; align-items:center; gap:5px; padding:6px 10px}
 .mn-empty{position:absolute; left:0; right:0; top:50%; transform:translateY(-50%); color:var(--muted); font-size:13px; text-align:center}
 .mn-ph{visibility:hidden}
 
-/* 이름표 상세 */
+/* Name-chip details */
 .mn-psum{margin:0 0 8px; font-size:14px; color:var(--muted)}
 .mn-psum b{color:var(--ink)}
 .mn-plist{list-style:none; margin:0; padding:0; font-size:14px}
 .mn-plist li{padding:5px 2px; border-bottom:1px solid var(--line)}
 .mn-plist li.rcv{color:var(--muted); font-size:13px}
 
-/* 라운드 결과 · 지도 */
+/* Round result · map */
 .mn-over{position:absolute; top:4px; left:4px; right:4px; z-index:5; max-height:calc(100% - 8px); overflow-y:auto; animation:rise .25s}
 .mn-ovbox{padding:12px 14px 10px; border-radius:14px; background:rgba(20,14,9,.96); border:1px solid rgba(230,195,106,.5); box-shadow:0 20px 50px -10px rgba(0,0,0,.9)}
 .mn-ovbox.s{border-color:rgba(217,83,79,.65)}

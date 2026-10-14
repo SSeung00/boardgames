@@ -1,10 +1,11 @@
-/* 달무티 AI — C:\Users\user\dalmuti\web\ai.js 를 ES 모듈로 옮긴 것.
-   다른 점 하나: 원본은 난수를 E.rand(G) 로 뽑아 게임 상태를 바꾸지만, 놀이방 규약상 AI 는 상태를 바꾸면 안 되므로
-   난수 함수 rnd() 를 따로 받는다. 같은 난수열을 주면 원본과 같은 수를 둔다 (test_port.mjs 가 대조한다). */
+/* Dalmuti AI — C:\Users\user\dalmuti\web\ai.js ported to an ES module.
+   One difference: the original draws random numbers with E.rand(G), which changes the game state, but the room contract
+   forbids AI from changing state, so a separate random function rnd() is passed in. Given the same random sequence it
+   picks the same moves as the original (test_port.mjs compares them). */
 import * as E from "./rules.js";
 const { JESTER, TOTAL } = E;
 
-/* 쉬움 — 이길 수 있으면 무조건 가장 약한 카드로 받아치고, 선일 땐 아무 묶음이나 낸다 */
+/* Easy — always beats with the weakest possible cards when it can; when leading, plays any set */
 export function easy(G, p, rnd) {
   const h = G.hands[p], J = h[JESTER];
   if (!G.trick) {
@@ -18,7 +19,7 @@ export function easy(G, p, rnd) {
   return c.length ? E.actionId(c[0].r, c[0].own, c[0].uj) : 0;
 }
 
-/* 같은 장수로 받아칠 수 있는 후보. 광대를 덜 쓰고, 약한 숫자부터, 묶음을 덜 깨는 순 */
+/* Candidates that beat the trick with the same card count. Ordered by fewest Jesters, weakest number, fewest split sets */
 export function followCands(G, p) {
   const h = G.hands[p], J = h[JESTER], need = G.trick.count, limit = G.trick.rank;
   const out = [];
@@ -32,7 +33,7 @@ export function followCands(G, p) {
   return out;
 }
 
-/* 보통 — 약한 큰 묶음부터 털고, 2 이하 카드와 광대는 아낀다 */
+/* Normal — sheds large weak sets first and saves cards of 2 or lower and Jesters */
 export function normal(G, p, rnd) {
   const h = G.hands[p], J = h[JESTER], size = E.handSize(G, p);
   if (!G.trick) {
@@ -53,7 +54,7 @@ export function normal(G, p, rnd) {
   return id;
 }
 
-/* 어려움 — 나온 카드를 세어 "아무도 못 받아칠 수"를 알고, 선을 지키며 털어 나간다 */
+/* Hard — counts played cards to know "plays nobody can beat", and keeps the lead while shedding */
 export function hard(G, p) {
   const h = G.hands[p], J = h[JESTER], size = E.handSize(G, p);
   const unseen = new Array(14).fill(0);
@@ -74,7 +75,7 @@ export function hard(G, p) {
     const safe = ranks.filter(r => !beatable(r, h[r]));
     if (ranks.length === 2 && safe.length) return E.actionId(safe[0], h[safe[0]], 0);
     if (minOther <= 2) {
-      // 누군가 곧 나간다 — 장수가 큰 묶음으로 따라오기 어렵게 막는다
+      // someone is about to go out — block them with a big set that is hard to follow
       let best = ranks[0];
       for (const r of ranks) if (h[r] > h[best] || (h[r] === h[best] && r > best)) best = r;
       if (h[best] > minOther) return E.actionId(best, h[best], 0);
@@ -104,8 +105,8 @@ export function hard(G, p) {
   return E.actionId(c.r, c.own, c.uj);
 }
 
-/* ---------- 학습된 정책 (Q 네트워크) ----------
-   정책: {obs, act, layers:[{in,out,w,b}]} (w, b 는 float32 base64) — policy.js */
+/* ---------- Learned policy (Q network) ----------
+   Policy: {obs, act, layers:[{in,out,w,b}]} (w, b are float32 base64) — policy.js */
 function b64f32(s) {
   const bin = atob(s), u8 = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
@@ -113,7 +114,7 @@ function b64f32(s) {
 }
 export function loadPolicy(raw) {
   if (!raw || !raw.layers) return null;
-  if (raw.obs !== E.OBS || raw.act !== E.ACT) return null;    // 인코딩이 바뀌었으면 쓰지 않는다
+  if (raw.obs !== E.OBS || raw.act !== E.ACT) return null;    // don't use it if the encoding has changed
   return {
     meta: raw.meta || {}, layers: raw.layers.map(L => ({
       in: L.in, out: L.out,
@@ -138,7 +139,7 @@ export function qValue(policy, x) {
   });
   return h[0];
 }
-/* 학습된 AI. tau(온도)가 0 이면 늘 최선의 수, 클수록 덜 좋은 수도 섞어 둔다 */
+/* Learned AI. tau (temperature) 0 always plays the best move; higher values mix in weaker moves */
 export function learned(G, p, policy, tau, rnd) {
   const ids = E.legal(G);
   if (ids.length === 1) return ids[0];
@@ -161,7 +162,7 @@ export function choose(G, p, level, rnd, policy) {
   return normal(G, p, rnd);
 }
 
-/* 혁명: 대농노는 잃을 게 없으니 무조건, 소농노는 세금을 지키니 선언, 상인은 반반, 달무티는 안 한다 */
+/* Revolution: the Greater Peon has nothing to lose (always), the Lesser Peon declares to save its tax, a Merchant sometimes, a Dalmuti never */
 export function revolt(G, p, rnd) {
   const t = G.titles[p];
   if (t === E.T.GP || t === E.T.LP) return true;

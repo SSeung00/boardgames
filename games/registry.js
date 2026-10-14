@@ -1,4 +1,4 @@
-/* 게임 목록. 새 게임: games/<id>/engine.js · ui.js · style.css 를 만들고 여기에 한 줄 추가. */
+/* Game list. New game: create games/<id>/engine.js, ui.js and style.css, then add one line here. */
 import oldmaid from "./oldmaid/engine.js";
 import onecard from "./onecard/engine.js";
 import poker from "./poker/engine.js";

@@ -1,22 +1,22 @@
-/* 포커 — 화면 높이를 재서(컨테이너 단위 cqh) 카드 · 글자를 키운다. 360×640 부터 430×932 까지 스크롤 없이 */
+/* Poker — cards and text scale with the measured screen height (container units, cqh). No scrolling from 360×640 to 430×932 */
 .pk{height:100%; display:flex; flex-direction:column; container:pk / size}
 
-/* ---------- 상대 자리판 ---------- */
+/* ---------- Opponent panels ---------- */
 .pk-opps{display:grid; gap:5px; padding:6px 8px 3px; flex:0 0 auto; --fs:clamp(12px, 1.75cqh, 15px)}
 .pk-opps.c1{grid-template-columns:minmax(0,1fr); --fs:clamp(13px, 2cqh, 16px)}
 .pk-opps.c2{grid-template-columns:repeat(2,minmax(0,1fr))}
 .pk-opps.c3{grid-template-columns:repeat(3,minmax(0,1fr))}
 .pk-opps.c4{grid-template-columns:repeat(4,minmax(0,1fr)); gap:4px; padding:5px 6px 3px; --fs:clamp(11.5px, 1.5cqh, 13px)}
 .pk-opps.c3.r2{--fs:clamp(11.5px, 1.65cqh, 14px)}
-/* 상대 4명: 화면이 넉넉하면 2×2 로 크게 */
+/* 4 opponents: a bigger 2×2 grid when there is room */
 @container pk (min-height:680px){
   .pk-opps.n4{grid-template-columns:repeat(2,minmax(0,1fr)); gap:5px; padding:6px 8px 3px; --fs:clamp(12px, 1.7cqh, 15px)}
 }
-/* 자리판: 이름줄 / 칩 · 패 / 마지막 행동 · 베팅 / 이번 판 기록 */
+/* Panel: name row / chips · cards / last action · bet / this hand's history */
 .seatchip.pk-seat{position:relative; flex-direction:column; align-items:stretch; gap:2px; padding:5px 7px 6px; border-radius:12px; min-width:0; font-size:var(--fs); line-height:1.25; overflow:hidden; transition:opacity .2s, border-color .2s}
 .pk-s2, .pk-s3{display:flex; justify-content:space-between; align-items:center; gap:4px; min-width:0; min-height:calc(var(--fs) * 1.45)}
 .pk-rt2{display:flex; flex:0 0 auto}
-/* 상대 한 명(둘이 할 때): 가로로 넓게, 카드 두 장을 크게 */
+/* One opponent (heads-up): a wide panel with two big cards */
 .pk-opps.c1 .seatchip.pk-seat{display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"s1 hc" "stk hc" "s3 hc" "hist hc"; gap:3px 10px; padding:8px 10px}
 .pk-opps.c1 .pk-s1{grid-area:s1} .pk-opps.c1 .pk-s2{display:contents} .pk-opps.c1 .pk-stk{grid-area:stk} .pk-opps.c1 .pk-hc{grid-area:hc}
 .pk-opps.c1 .pk-s3{grid-area:s3; justify-content:flex-start} .pk-opps.c1 .pk-hist{grid-area:hist}
@@ -24,7 +24,7 @@
 .pk-opps.c1 .pk-hc{gap:5px}
 .pc.pk-oc{--ch:clamp(54px, 10cqh, 96px); --cw:calc(var(--ch) / 1.4)}
 .pc.pk-oc .pc-corner{font-size:calc(var(--cw) * .3)} .pc.pk-oc .pc-corner i{font-size:calc(var(--cw) * .22)} .pc.pk-oc .pc-mid{font-size:calc(var(--cw) * .5)} .pc.pk-oc .pc-corner.br{display:none}
-/* 자리마다 이번 판 행동 순서 — 화면이 넉넉할 때만 */
+/* Per-seat actions this hand — only when there is room */
 .pk-hist{display:none; align-items:center; gap:0 4px; font-size:calc(var(--fs) * .8); color:var(--muted); white-space:nowrap; overflow:hidden; min-width:0; line-height:1.4; border-top:1px solid var(--line); padding-top:2px; margin-top:1px}
 .pk-hist:empty{display:none!important}
 .pk-hist.cut::before{content:"…"; margin-right:-2px}
@@ -45,7 +45,7 @@
 .pk-stk{font-weight:800; color:var(--gold2); font-variant-numeric:tabular-nums; font-size:calc(var(--fs) * 1.12); white-space:nowrap}
 .pk-hc{display:flex; gap:2px; flex:0 0 auto; justify-content:flex-end}
 .pk-st{min-width:0; overflow:hidden; display:flex}
-/* 마지막 행동 배지 */
+/* Last-action badge */
 .pk-ab{display:inline-block; max-width:100%; font-size:calc(var(--fs) * .9); font-weight:700; line-height:1.45; padding:0 6px; border-radius:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   background:rgba(255,255,255,.1); color:var(--ink)}
 .pk-ab.check{background:rgba(255,255,255,.1); color:#dfe7dc}
@@ -70,9 +70,13 @@
 .pk-seat.pk-win{opacity:1; border-color:var(--green); box-shadow:0 0 0 1px var(--green), 0 0 16px rgba(92,196,137,.35)}
 .pk-seat.turn{background:rgba(230,195,106,.14)}
 .pk-opps.c4 .pk-b{font-size:8.5px; padding:2px 3px}
+/* Narrow panels: tighter badge and bet chip so short action words ("Raise", "레이즈") fit beside the amount */
+.pk-opps.c4 .pk-s3{gap:2px}
+.pk-opps.c4 .pk-ab{padding:0 3px}
+.pk-opps.c4 .pk-bet{padding:0 4px}
 .pk-opps.c4 .pk-b.d{width:14px; height:14px; padding:0}
 
-/* 자리 표시 · 칩 · 작은 카드 */
+/* Position marks · chips · mini cards */
 .pk-b{font-style:normal; flex:0 0 auto; font-size:9.5px; font-weight:800; line-height:1; padding:2px 4px; border-radius:6px; background:rgba(255,255,255,.14); color:var(--ink); letter-spacing:.02em}
 .pk-b.d{background:#f4f1e6; color:#1b1b1b; border-radius:50%; width:15px; height:15px; padding:0; display:inline-grid; place-items:center}
 .pk-bet{flex:0 0 auto; font-size:calc(var(--fs, 13px) * .92); font-weight:800; color:#1b1b1b; background:linear-gradient(180deg,var(--gold2),var(--gold)); border-radius:999px; padding:0 6px; line-height:1.4; font-variant-numeric:tabular-nums}
@@ -85,7 +89,7 @@
 .pk-opps.c1 .pk-back{width:calc(var(--fs) * 1.3); height:calc(var(--fs) * 1.8)}
 .pk-opps.c1 .pk-mini{font-size:calc(var(--fs) * 1.05); padding:4px 3px}
 
-/* ---------- 펠트 ---------- */
+/* ---------- Felt ---------- */
 .pk-table{flex:1 1 0; min-height:0; margin:2px 8px 5px; border-radius:20px; position:relative; display:flex; flex-direction:column; align-items:center; justify-content:space-evenly; gap:4px; padding:6px 8px;
   box-shadow:inset 0 0 0 2px rgba(230,195,106,.25), inset 0 10px 40px rgba(0,0,0,.4); overflow:hidden; container-type:size}
 .pk-info{width:100%; display:flex; align-items:center; justify-content:center; gap:8px; font-size:12px; color:rgba(255,255,255,.75); min-height:22px; flex-wrap:wrap; flex:0 0 auto}
@@ -93,7 +97,7 @@
 .pk-street{font-size:12px; padding:1px 9px; border-radius:999px; background:rgba(0,0,0,.35); color:var(--gold2)!important; border:1px solid rgba(230,195,106,.4)}
 .pk-lastbtn{font-size:11.5px; padding:2px 8px; min-height:24px; border-radius:999px; border:1px solid rgba(255,255,255,.3); background:rgba(0,0,0,.25); color:#fff}
 .pk-board{display:flex; gap:6px; justify-content:center; flex:0 0 auto}
-/* 공용 카드: 펠트 폭(5장)과 높이 중 작은 쪽에 맞춘다 */
+/* Board cards: sized to the smaller of the felt's width (5 cards) and height */
 .pk-table .pk-board .pc, .pk-table .pk-slot{--ch:min(calc((100cqw - 28px) / 5 * 1.4), 44cqh, 150px); --cw:calc(var(--ch) / 1.4)}
 .pk-ended .pk-table .pk-board .pc, .pk-ended .pk-table .pk-slot{--ch:min(calc((100cqw - 28px) / 5 * 1.4), 25cqh, 130px)}
 .pk-table .pk-board .pc .pc-corner, .pk-hole .pc .pc-corner{font-size:calc(var(--cw) * .27); top:calc(var(--cw) * .05); left:calc(var(--cw) * .07)}
@@ -116,7 +120,7 @@
 .pk-runout{font-size:13px; font-weight:800; color:#ffb4a8; animation:blink 1.2s ease-in-out infinite}
 .pk-line{font-size:13.5px; color:#f4f1e6; text-align:center; min-height:1.4em; padding:0 6px}
 
-/* 이번 판 행동 기록 (새것부터) */
+/* This hand's action log (newest first) */
 .pk-log{width:100%; display:flex; flex-wrap:wrap; justify-content:center; align-content:flex-start; gap:3px 4px; max-height:43px; overflow:hidden; flex:0 0 auto}
 .pk-log:empty{display:none}
 .pk-lg{font-size:11.5px; line-height:20px; padding:0 8px; border-radius:999px; background:rgba(0,0,0,.3); color:#ddd8ca; white-space:nowrap; font-variant-numeric:tabular-nums}
@@ -134,7 +138,7 @@
 @container (max-height:200px){ .pk-info{display:none} .pk-log{max-height:20px} }
 @container (max-height:150px){ .pk-log{display:none} .pk-cur{display:none} }
 
-/* 판 결과 */
+/* Hand results */
 .pk-res{width:100%; display:flex; flex-direction:column; gap:4px; animation:fade .25s}
 .pk-rt{text-align:center; font-size:12px; font-weight:800; letter-spacing:.12em; color:var(--gold2)}
 .pk-rt:empty{display:none}
@@ -146,7 +150,7 @@
 .pk-wn b{color:#fff}
 .pk-pw em{font-style:normal; font-weight:800; color:var(--gold2)}
 .pk-shows{display:flex; flex-direction:column; gap:3px}
-/* 펠트가 낮으면 결과 줄을 촘촘하게 */
+/* Compact result rows on a short felt */
 @container (max-height:340px){
   .pk-show{padding:2px 8px}
   .pk-show .pc.sm{--cw:26px; --ch:37px}
@@ -168,12 +172,12 @@
 .pk-mres .pk-prow{background:rgba(255,255,255,.05)}
 .pk-mres .pk-show{background:rgba(255,255,255,.04)}
 
-/* ---------- 아래: 내 패 · 계산 · 행동 ---------- */
+/* ---------- Bottom: my hand · calc · actions ---------- */
 .pk-dock{transition:box-shadow .2s; padding-top:7px}
 .pk-dock.pk-act{box-shadow:inset 0 2px 0 var(--gold), 0 -8px 24px -12px rgba(230,195,106,.5)}
 .pk-me{display:flex; align-items:center; gap:12px; padding:0 2px; --mf:clamp(13px, 2cqh, 17px)}
 .pk-hole{display:flex; gap:6px; flex:0 0 auto; align-items:center}
-/* 내 두 장: 화면 높이에 맞춰 크게 */
+/* My two cards: as big as the screen height allows */
 .pk-hole .pc{--ch:clamp(84px, 16.5cqh, 156px); --cw:calc(var(--ch) / 1.4)}
 .pk-many .pk-hole .pc{--ch:clamp(78px, 13.5cqh, 132px)}
 @container pk (max-height:700px){ .pk-ended .pk-hole .pc{--ch:clamp(64px, 11cqh, 140px)} }
@@ -203,7 +207,7 @@
 .pk-good, .pk-made b.pk-good{color:var(--green)}
 .pk-folded{color:var(--muted); font-weight:700}
 
-/* 계산 줄 */
+/* Calc row */
 .pk-calc{display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; margin:7px 0 0}
 .pk-cc{display:flex; flex-direction:column; align-items:center; justify-content:center; min-width:0; min-height:42px; padding:2px 2px 3px; border-radius:10px; border:1px solid var(--line); background:rgba(255,255,255,.05); line-height:1.2}
 .pk-cc small{font-size:10.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%}
@@ -222,7 +226,7 @@ button.pk-cc{font:inherit; color:inherit}
 .pk-dock .hint small{color:var(--faint)}
 .pk-dock .actions .btn{padding:10px 6px; white-space:nowrap; min-height:48px}
 
-/* 레이즈 판 */
+/* Raise panel */
 .pk-raise{display:flex; flex-direction:column; gap:6px; animation:rise .18s ease}
 .pk-rhead{display:flex; justify-content:space-between; align-items:baseline; gap:8px; padding:0 2px}
 .pk-rhead span{font-size:14px; font-weight:700}
@@ -239,7 +243,7 @@ button.pk-cc{font:inherit; color:inherit}
 .pk-qb.on{border-color:var(--gold); background:rgba(230,195,106,.16)}
 .btn.pk-allok{background:linear-gradient(180deg,#d9534f,#a8322f)}
 
-/* 레이즈 판이 열리면 계산 줄은 숨긴다 (판 안에 같은 계산이 나온다). 작은 화면에서는 내 패 · 펠트도 줄여 자리를 만든다 */
+/* With the raise panel open, hide the calc row (the panel shows the same numbers). On small screens also shrink my cards and the felt to make room */
 .pk-raising .pk-calc{display:none}
 @container pk (max-height:700px){
   .pk-raising .pk-hole .pc{--ch:clamp(56px, 9cqh, 92px)}

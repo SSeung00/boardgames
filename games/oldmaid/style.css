@@ -1,6 +1,6 @@
 .om{height:100%; display:flex; flex-direction:column; position:relative}
 
-/* 카드 그림은 카드 크기(--cw)를 따라 커진다 */
+/* Card faces scale with the card size (--cw) */
 .om .pc{border-radius:calc(var(--cw) * .09)}
 .om .pc .pc-corner{font-size:calc(var(--cw) * .27); top:calc(var(--cw) * .05); left:calc(var(--cw) * .07)}
 .om .pc .pc-corner i{font-size:calc(var(--cw) * .22)}
@@ -13,7 +13,7 @@
 .om .pc.om-rk{color:#5a5145; background:linear-gradient(180deg,#fffdf7,#e7dfcc)}
 .om .pc.om-rk .pc-mid{font-weight:900; font-size:calc(var(--cw) * .48)}
 
-/* ---------- 상대 줄: 나 ‹ A ‹ B ‹ 나 (카드가 넘어가는 방향) ---------- */
+/* ---------- Opponents row: me ‹ A ‹ B ‹ me (the way cards move) ---------- */
 .om-opps{flex:0 0 auto; display:flex; align-items:stretch; justify-content:center; gap:1px; padding:10px 4px 3px}
 .om-opp{flex:1 1 0; min-width:0; max-width:100px; position:relative; display:flex; flex-direction:column; align-items:center; gap:1px;
   padding:6px 2px 4px; border-radius:11px; background:rgba(0,0,0,.32); border:1px solid var(--line)}
@@ -51,7 +51,7 @@
 .om.tall .om-opps:not(.many) .om-on{font-size:12.5px}
 .om.tall .om-opps:not(.many) .om-oc b{font-size:22px}
 
-/* ---------- 판 ---------- */
+/* ---------- Table ---------- */
 .om-table{flex:1 1 auto; min-height:0; margin:3px 8px 6px; border-radius:20px; position:relative; overflow:hidden;
   box-shadow:inset 0 0 0 2px rgba(230,195,106,.25), inset 0 10px 40px rgba(0,0,0,.4);
   display:flex; flex-direction:column; align-items:center; justify-content:space-evenly; padding:8px; gap:4px}
@@ -84,7 +84,7 @@
 .om-log b{color:var(--gold2)}
 .om-log div:not(:first-child) b{color:inherit}
 
-/* 짝 맞은 카드 — 잠깐 보여 주기 */
+/* Matched pair — brief reveal */
 .om-pair{position:absolute; inset:0; z-index:4; display:grid; place-items:center; pointer-events:none; background:rgba(5,12,8,.35)}
 .om-pair.on{animation:omPair 1.9s ease forwards}
 .om-pairin{display:flex; flex-direction:column; align-items:center; gap:6px; padding:12px 20px 10px; border-radius:16px; background:rgba(10,20,14,.88); border:1px solid var(--gold);
@@ -96,7 +96,7 @@
 .om-pc .pc:last-child{transform:rotate(6deg)}
 @keyframes omPair{0%{opacity:0; transform:scale(.85)} 12%{opacity:1; transform:none} 80%{opacity:1} 100%{opacity:0}}
 
-/* ---------- 아래: 내 요약 · 안내 · 패 ---------- */
+/* ---------- Bottom: my summary · hint · hand ---------- */
 .om-dock{padding:5px 8px calc(8px + env(safe-area-inset-bottom,0px))}
 .om-me{display:flex; flex-wrap:wrap; justify-content:center; gap:4px}
 .om-chip{font-size:12px; line-height:1.5; padding:0 8px; border-radius:999px; background:rgba(255,255,255,.07); border:1px solid var(--line); white-space:nowrap}

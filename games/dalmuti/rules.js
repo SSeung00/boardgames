@@ -1,17 +1,17 @@
-/* 달무티 규칙 엔진 (ES 모듈) — C:\Users\user\dalmuti\web\engine.js 를 그대로 옮긴 것.
-   규칙 · 난수 · 행동 번호가 원본과 한 줄씩 같아야 한다 (games/dalmuti/test_port.mjs 가 대조한다).
-   원본을 고치면 이 파일도 같이 고칠 것. 화면 · 소리 · DOM 과 무관한 순수 규칙.
+/* Dalmuti rules engine (ES module) — a verbatim port of C:\Users\user\dalmuti\web\engine.js.
+   Rules, randomness and action ids must match the original line for line (games/dalmuti/test_port.mjs compares them).
+   If the original changes, change this file too. Pure rules — no screen, sound or DOM.
 
-   카드는 개별 객체가 아니라 숫자별 장수로 다룬다. hands[p][r] = 플레이어 p 가 가진 숫자 r 카드 수.
-   r = 1..12 는 일반 카드, r = 13 은 광대(와일드). 인덱스 0 은 쓰지 않는다. */
+   Cards are tracked as counts per number, not as objects: hands[p][r] = how many r cards player p holds.
+   r = 1..12 are normal cards, r = 13 is the Jester (wild). Index 0 is unused. */
 
 export const JESTER = 13;
 export const TOTAL = r => r === JESTER ? 2 : r;
-/* 계급 코드: 0 평민(첫 라운드) · 1 대달무티 · 2 소달무티 · 3 상인 · 4 소농노 · 5 대농노 */
+/* Title codes: 0 commoner (first round) · 1 Greater Dalmuti · 2 Lesser Dalmuti · 3 Merchant · 4 Lesser Peon · 5 Greater Peon */
 export const T = { NONE: 0, GD: 1, LD: 2, MER: 3, LP: 4, GP: 5 };
 
-/* ---------- 행동 목록 (고정 237개) ----------
-   0 = 패스. 그다음 (숫자 r, 그 숫자 카드 k장, 광대 j장) 을 r → k → j 순으로, 끝에 광대만 1·2장. */
+/* ---------- Action list (fixed, 237 entries) ----------
+   0 = pass. Then (number r, k cards of that number, j Jesters) in r → k → j order, and finally Jesters alone (1 or 2). */
 export const ACTIONS = [{ id: 0, pass: true, rank: 0, plain: 0, jesters: 0, count: 0 }];
 for (let r = 1; r <= 12; r++)
   for (let k = 1; k <= r; k++)
@@ -23,12 +23,12 @@ const ACTION_INDEX = new Map();
 ACTIONS.forEach(a => ACTION_INDEX.set(a.rank * 100 + a.plain * 3 + a.jesters, a.id));
 export function actionId(r, k, j) {
   const id = ACTION_INDEX.get(r * 100 + k * 3 + j);
-  if (id === undefined) throw new Error(`없는 행동: ${r}/${k}/${j}`);
+  if (id === undefined) throw new Error(`no such action: ${r}/${k}/${j}`);
   return id;
 }
 
-/* ---------- 난수 (mulberry32) — 상태를 G.rs 에 담아 저장·재현이 가능하다 ----------
-   원본과 같게 G.rs 를 부호 있는 32비트(| 0)로 둔다 (core/rng.js 와 같은 수열이지만 저장 형태가 다르다) */
+/* ---------- Randomness (mulberry32) — the state lives in G.rs, so games can be saved and replayed ----------
+   As in the original, G.rs is kept as a signed 32-bit int (| 0) (same sequence as core/rng.js, different storage form) */
 export function rand(G) {
   G.rs = (G.rs + 0x6D2B79F5) | 0;
   let t = Math.imul(G.rs ^ (G.rs >>> 15), 1 | G.rs);
@@ -58,24 +58,24 @@ export function titleCode(i, n) {
   return T.MER;
 }
 
-/* ---------- 게임 생성 ---------- */
+/* ---------- Game creation ---------- */
 export function create(opt) {
   const n = opt.n;
   return {
     v: 1, n, rounds: opt.rounds, round: 1, rs: opt.seed | 0,
-    seats: [...Array(n).keys()],          // 앉은 순서 = 진행 순서
+    seats: [...Array(n).keys()],          // seating order = turn order
     titles: zeros(n), scores: zeros(n),
     hands: [...Array(n)].map(() => zeros(14)),
     played: zeros(14),
     trick: null,                          // {rank, count, plain, jesters, by}
-    turn: 0,                              // seats 의 인덱스
+    turn: 0,                              // index into seats
     passStreak: 0,
     passed: new Array(n).fill(false),
     finish: [],
     phase: "draw",                        // draw → deal → (revolution → tax) → play → roundEnd → … → over
-    reveal: null,                         // {p, great} 혁명으로 광대 2장이 공개된 사람
+    reveal: null,                         // {p, great} the player whose two Jesters a revolution revealed
     firstLeader: null,
-    lastAct: new Array(n).fill(null)      // 이번 판에서 각자 마지막으로 한 행동 (화면 표시용)
+    lastAct: new Array(n).fill(null)      // each player's last action in the current trick (for display)
   };
 }
 
@@ -90,7 +90,7 @@ export function nextWithCards(G, fromSeat) {
   return -1;
 }
 
-/* ---------- 자리 뽑기: 한 장씩 뽑아 낮은 숫자부터 앉는다 (광대 13이 가장 약하다) ---------- */
+/* ---------- Seat draw: everyone draws one card, lowest number sits first (the Jester, 13, is the weakest) ---------- */
 export function seatingDraw(G) {
   const deck = shuffle(G, newDeck());
   const draws = [];
@@ -102,7 +102,7 @@ export function seatingDraw(G) {
   return { draws: draws.map(d => ({ p: d.p, rank: d.rank })), order };
 }
 
-/* ---------- 딜 ---------- */
+/* ---------- Deal ---------- */
 function resetTrick(G) {
   G.trick = null;
   G.passStreak = 0;
@@ -129,7 +129,7 @@ export function toPlay(G) {
   resetTrick(G);
 }
 
-/* ---------- 혁명 ---------- */
+/* ---------- Revolution ---------- */
 export function revolutionCandidate(G) {
   for (let p = 0; p < G.n; p++) if (G.hands[p][JESTER] === 2) return p;
   return -1;
@@ -146,7 +146,7 @@ export function declareRevolution(G, p) {
 }
 export function skipRevolution(G) { G.phase = "tax"; }
 
-/* ---------- 세금 ---------- */
+/* ---------- Tax ---------- */
 export function taxPairs(G) {
   const by = t => G.seats.find(p => G.titles[p] === t);
   const out = [];
@@ -155,14 +155,14 @@ export function taxPairs(G) {
   if (lp !== undefined && ld !== undefined && lp !== ld) out.push({ peon: lp, lord: ld, k: 1 });
   return out;
 }
-/* 농노는 가장 낮은 숫자부터 바친다 — 광대는 13이라 사실상 바칠 일이 없다 */
+/* Peons pay their lowest numbers first — the Jester counts as 13, so it is practically never paid */
 export function tribute(G, peon, k) {
   const out = [];
   for (let r = 1; r <= 13 && out.length < k; r++)
     for (let c = G.hands[peon][r]; c > 0 && out.length < k; c--) out.push(r);
   return out;
 }
-/* 달무티 기본 하사: 가장 약한 일반 카드부터, 광대는 마지막까지 쥔다 */
+/* Default Dalmuti give-back: weakest normal cards first, Jesters are kept until last */
 export function giveBackDefault(G, lord, k) {
   const out = [];
   for (let r = 12; r >= 1 && out.length < k; r--)
@@ -173,12 +173,12 @@ export function giveBackDefault(G, lord, k) {
 export function transfer(G, from, to, ranks) {
   const need = zeros(14);
   ranks.forEach(r => need[r]++);
-  for (let r = 1; r <= 13; r++) if (need[r] > G.hands[from][r]) throw new Error("가진 것보다 많이 넘길 수 없다");
+  for (let r = 1; r <= 13; r++) if (need[r] > G.hands[from][r]) throw new Error("cannot transfer more cards than held");
   ranks.forEach(r => { G.hands[from][r]--; G.hands[to][r]++; });
 }
 export function finishTax(G) { toPlay(G); }
 
-/* ---------- 합법수 ---------- */
+/* ---------- Legal moves ---------- */
 export function legal(G) {
   const p = current(G), h = G.hands[p], J = h[JESTER], out = [];
   if (!G.trick) {
@@ -207,10 +207,10 @@ export function isLegal(G, id) {
   return a.rank !== JESTER && a.count === G.trick.count && a.rank < G.trick.rank;
 }
 
-/* ---------- 한 수 두기 ---------- */
+/* ---------- Making a move ---------- */
 export function act(G, id) {
-  if (G.phase !== "play") throw new Error("지금은 낼 차례가 아니다");
-  if (!isLegal(G, id)) throw new Error("규칙에 맞지 않는 수: " + id);
+  if (G.phase !== "play") throw new Error("not in the play phase");
+  if (!isLegal(G, id)) throw new Error("illegal move: " + id);
   const p = current(G), a = ACTIONS[id];
   const ev = { player: p, id, type: a.pass ? "pass" : "play" };
 
@@ -241,7 +241,7 @@ export function act(G, id) {
   }
   if (G.trick) {
     const owner = G.trick.by, ownerHas = handSize(G, owner) > 0;
-    // 공식 룰: 마지막에 낸 사람을 뺀 전원이 연속으로 패스하면 판이 끝난다
+    // Official rule: the trick ends when everyone except the last player to play has passed in a row
     if (G.passStreak >= holders.length - (ownerHas ? 1 : 0)) {
       const ws = seatOf(G, owner);
       G.turn = ownerHas ? ws : nextWithCards(G, ws);
@@ -254,7 +254,7 @@ export function act(G, id) {
   return ev;
 }
 
-/* ---------- 라운드 정산 ---------- */
+/* ---------- Round scoring ---------- */
 export function endRound(G) {
   const points = G.finish.map((p, i) => G.n - i);
   G.finish.forEach((p, i) => { G.scores[p] += G.n - i; });
@@ -266,7 +266,7 @@ export function endRound(G) {
   return summary;
 }
 
-/* ---------- 학습된 AI 용 인코딩 (원본 · python/dalmuti/engine.py 와 같아야 한다) ---------- */
+/* ---------- Encoding for the learned AI (must match the original and python/dalmuti/engine.py) ---------- */
 export const OBS = 104, ACT = 21;
 export function encodeObs(G, p) {
   const f = new Array(OBS).fill(0), h = G.hands[p], n = G.n;
