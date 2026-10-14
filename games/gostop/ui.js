@@ -1,10 +1,27 @@
-/* 고스톱 화면 — 위: 상대 (1~2명) · 가운데 펠트: 더미 · 방금 낸 패 · 바닥 (월별로 겹쳐 쌓기) · 아래: 내가 먹은 패 + 손패
-   손패를 한 번 누르면 고르고(바닥의 같은 월이 빛남), 한 번 더 누르면 낸다. 흔들기 · 폭탄이 되면 작은 창으로 묻는다. */
-import { CARDS, hwHTML, monthOf, isBonus, cardName, groupOf, SET_NAME } from "./cards.js";
+/* 고스톱 화면 — 위: 상대 정보판 · 가운데 펠트: 더미 + 바닥 (월별 묶음 격자, 남는 높이만큼 카드를 키운다) · 아래: 내 정보판 + 손패
+   정보판(나 · 상대 모두): 점수 · 나기까지 남은 점수 · 광/띠/열끗/피/홍단/청단/초단/고도리 진행 · 피박/광박 위험 · 고/흔들 배수 · 마지막 차례.
+   손패: 누르지 않아도 바닥에서 무엇을 먹는지 · 점수가 오르는지 · 상대 약을 막는지 · 흔들기/폭탄이 되는지 표시.
+   한 번 누르면 고르고(결과 미리보기), 한 번 더 누르면 낸다. 진행 기록은 정보판에 직접 보이므로 위쪽 한 줄 기록(ticker)은 끈다. */
+import { CARDS, hwHTML, monthOf, isBonus, cardName, groupOf, kindKey, kindLabel, SET_NAME, SET_CARDS } from "./cards.js";
+import { scoreOf, settle } from "./engine.js";
 
 const GROUPS = [["g", "광"], ["t", "띠"], ["y", "열끗"], ["p", "피"]];
-const OFF = 15;                       // 바닥에서 같은 월 카드를 겹칠 때 아래로 내리는 간격(px)
+const SETS = ["hong", "cheong", "cho", "go"];
+const GWANG = ["1a", "3a", "8a", "11a", "12a"];
+const OFFR = 0.27;                    // 바닥에서 같은 월 카드를 겹칠 때 내리는 간격 (카드 높이 비율)
+const TK = { g: "광", hong: "홍", cheong: "청", cho: "초", rain: "띠", y: "열", go: "새", guk: "국", pp: "쌍", p: "피" };
+const KPRI = { g: 9, hong: 7, cheong: 7, cho: 7, go: 7, guk: 5, y: 4, rain: 3, pp: 3, p: 1 };
 const signed = x => (x > 0 ? "+" : "") + x;
+const sameKind = (a, b) => CARDS[a].t === "p" && CARDS[b].t === "p" && CARDS[a].pv === CARDS[b].pv;
+const SET_ITEM = /^(홍단|청단|초단|고도리|\d광|비삼광)$/;
+
+/* 카드 한 장을 글자 크기 패로 (마지막 차례 기록용) */
+function tok(id) {
+  const c = CARDS[id];
+  if (c.bonus) return `<span class="gs-tk t-b" title="${cardName(id)}"><b>★</b>+${c.pv}</span>`;
+  const k = kindKey(id);
+  return `<span class="gs-tk m${c.m} t-${k}" title="${cardName(id)}"><b>${c.m}</b>${k === "g" && c.rain ? "비" : TK[k]}</span>`;
+}
 
 export function mount(root, ctx) {
   const { el, esc, avatarHTML } = ctx;
@@ -13,18 +30,13 @@ export function mount(root, ctx) {
   wrap.innerHTML = `
     <div class="gs-opps" data-r="opps"></div>
     <div class="gs-table felt" data-r="table">
-      <div class="gs-top">
-        <div class="gs-deck" data-r="deck"></div>
-        <div class="gs-lastmv" data-r="lastmv"></div>
-        <div class="gs-info" data-r="info"></div>
-      </div>
       <div class="gs-floor" data-r="floor"></div>
       <div class="gs-pick" data-r="pick" hidden></div>
       <div class="gs-banner" data-r="banner"></div>
     </div>
-    <div class="gs-mine" data-r="mine" role="button" tabindex="0" aria-label="내가 먹은 패 보기"></div>
-    <div class="dock">
-      <div class="hint" data-r="hint"></div>
+    <div class="gs-p gs-mine" data-r="mine" role="button" tabindex="0" aria-label="내 정보 · 먹은 패 보기"></div>
+    <div class="gs-dock">
+      <div class="gs-hint" data-r="hint"></div>
       <div class="gs-hand" data-r="hand"></div>
     </div>
     <div class="gs-over" data-r="over" hidden></div>`;
@@ -32,22 +44,25 @@ export function mount(root, ctx) {
   const R = k => wrap.querySelector(`[data-r="${k}"]`);
 
   let M = null;                 // 마지막 msg
+  let A = null;                 // 화면이 계산해 둔 것 (analyze)
   let sel = null;               // 고른 손패
   let sentId = 0;               // 이미 답을 보낸 질문 id (두 번 보내지 않도록)
   let playAsk = 0;              // 마지막으로 본 내 「낼 차례」 질문 id
   let gsBox = null;             // 열린 고/스톱 창 {id, close}
   let hiddenRound = 0;          // 결과판을 닫은 판
   let prevFloor = null, prevHand = null, prevMine = null;
+  let lastBy = {}, lastKey = "", lastRound = 0;     // 사람마다 마지막 차례 (정보판에 표시)
   const anim = new Set();       // 방금 나타난 카드 (짧은 등장 애니메이션)
   const timers = new Set();
   const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); };
   const name = p => (M && M.players[p] ? M.players[p].name : "?");
   const who = p => (M && p === M.me ? "나" : esc(name(p)));
   const open = kind => { const a = ctx.myAsk(kind); return a && a.id !== sentId ? a : null; };
+  const live = v => ["play", "choose", "gostop"].includes(v.phase);
 
   R("mine").onclick = () => { if (M) showCaps(M.me); };
 
-  /* ---------------- 그리기 ---------------- */
+  /* ---------------- 상태 ---------------- */
   function update(m) {
     const fresh = m !== M;
     M = m;
@@ -62,188 +77,396 @@ export function mount(root, ctx) {
       if (!prevFloor) for (const c of v.floor) anim.add(c);
       prevFloor = new Set(v.floor); prevHand = new Set(v.hand); prevMine = new Set(mine);
       if (anim.size) later(() => anim.clear(), 800);
+      if (v.round !== lastRound) { lastRound = v.round; lastBy = {}; lastKey = ""; }
+      if (v.last) { const k = JSON.stringify(v.last); if (k !== lastKey) { lastKey = k; lastBy[v.last.p] = v.last; } }
       events(m);
     }
     if (sel && !v.hand.includes(sel)) sel = null;
     const pa = open("play");
-    if (pa && pa.id !== playAsk) { playAsk = pa.id; sel = null; }     // 새 차례: 미리 골라 둔 카드는 풀어 준다 (바닥이 바뀌었을 수 있다)
+    if (pa && pa.id !== playAsk) { playAsk = pa.id; sel = null; }     // 새 차례: 미리 골라 둔 카드는 풀어 준다
     render();
   }
 
+  /* 사람이 머릿속으로 세던 것을 모두 미리 계산한다 */
+  function analyze(v, me) {
+    const n = v.n, th = v.th;
+    const owner = {};
+    v.caps.forEach((cap, q) => cap.forEach(id => { owner[id] = q; }));
+    const fake = { n, round: v.round, caps: v.caps, go: v.go, shook: v.shook, nagari: v.nagari };
+    const P = [];
+    for (let q = 0; q < n; q++) {
+      const sc = v.scores[q], cap = v.caps[q];
+      let lpi = 0, lg = 0;                                  // 진 사람 기준 (국진은 쌍피로) — 피박 · 광박 판정과 같게
+      for (const id of cap) { const c = CARDS[id]; if (c.t === "p") lpi += c.pv; else if (c.guk) lpi += 2; else if (c.t === "g") lg++; }
+      const sets = {};
+      for (const s of SETS) {
+        const have = SET_CARDS[s].filter(id => owner[id] === q).length;
+        const dead = SET_CARDS[s].some(id => owner[id] !== undefined && owner[id] !== q);
+        sets[s] = { have, dead, done: have === 3, near: have === 2 && !dead, miss: SET_CARDS[s].filter(id => owner[id] === undefined) };
+      }
+      const missG = GWANG.filter(id => owner[id] === undefined);
+      const goal = v.go[q] ? Math.max(th, v.goScore[q] + 1) : th;
+      const goMul = v.go[q] >= 3 ? 2 ** (v.go[q] - 2) : 1;
+      P.push({
+        q, sc, lpi, lg, sets, missG, rain: cap.includes("12a"), goal, need: Math.max(0, goal - sc.total),
+        mul: 2 ** v.shook[q].length * goMul * v.nagari, goMul,
+        stop: sc.total >= goal ? settle(fake, q) : null      // 이번 차례가 끝날 때 나는 점수면 받을/낼 점수
+      });
+    }
+    // 위험: q 가 진다면 — 다른 사람이 피 · 광 · 열끗으로 앞서 갈 때만 경고 (판 처음부터 늘 켜져 있으면 소음)
+    for (const p of P) {
+      const o = P.filter(x => x !== p);
+      p.pibak = p.lpi < 6 && o.some(x => x.sc.pi >= 6);
+      p.gwangbak = p.lg === 0 && o.some(x => x.sc.g >= 2);
+      p.meong = o.some(x => x.sc.y >= 6);
+    }
+    // 바닥 · 손패 카드 중 누군가의 약을 완성하는 카드 (1장 남은 약)
+    const need = new Map();               // id → [{q, label}]
+    const add = (id, q, label) => { if (!need.has(id)) need.set(id, []); need.get(id).push({ q, label }); };
+    for (const p of P) {
+      for (const s of SETS) if (p.sets[s].near) for (const id of p.sets[s].miss) add(id, p.q, SET_NAME[s]);
+      if (p.sc.g === 2) for (const id of p.missG) add(id, p.q, "3광");
+    }
+    const threat = id => (need.get(id) || []).filter(x => x.q !== me);
+    const mineNeed = id => (need.get(id) || []).filter(x => x.q === me);
+    return { P, need, threat, mineNeed, owner };
+  }
+
+  /* 손패 한 장을 내면 (뒤집기 전까지) 어떻게 되는지 */
+  function handInfo(v, c) {
+    const me = M.me, P = A.P[me], caps = v.caps[me];
+    if (isBonus(c)) return { kind: "bonus", tag: "보너스", tcls: "good", can: true, gains: [] };
+    const m = monthOf(c), F = v.floor.filter(x => monthOf(x) === m);
+    const bomb = !!(v.can && v.can.bomb.includes(m)), shake = !!(v.can && v.can.shake.includes(m));
+    let kind, gains = [], alt = null;
+    const gain = ids => scoreOf([...caps, ...ids]).total;
+    if (bomb) { kind = "bomb"; gains = [...v.hand.filter(x => monthOf(x) === m), ...F]; }
+    else if (!F.length) kind = "lay";
+    else if (F.length === 1) { kind = "pair"; gains = [c, F[0]]; }
+    else if (F.length === 2) {
+      if (sameKind(F[0], F[1])) { kind = "pair"; gains = [c, F[0]]; }
+      else {
+        kind = "pair2";
+        const val = x => gain([c, x]) * 100 + (A.threat(x).length ? 50 : 0) + KPRI[kindKey(x)];
+        const [b, o] = val(F[0]) >= val(F[1]) ? [F[0], F[1]] : [F[1], F[0]];
+        gains = [c, b]; alt = o;
+      }
+    } else { kind = "take4"; gains = [c, ...F]; }
+    const after = gains.length ? scoreOf([...caps, ...gains]) : P.sc;
+    const delta = after.total - P.sc.total;
+    const done = after.items.map(x => x[0]).filter(l => SET_ITEM.test(l) && !P.sc.items.some(y => y[0] === l));
+    const blocks = [];
+    for (const id of gains) for (const t of A.threat(id)) blocks.push(`${who(t.q)} ${t.label}`);
+    const gives = kind === "lay" ? A.threat(c).map(t => `${who(t.q)} ${t.label}`) : [];
+    let tag = "", tcls = "";
+    if (bomb) { tag = "💣폭탄"; tcls = "bomb"; }
+    else if (done.length) { tag = done[0] + "!"; tcls = "gold"; }
+    else if (delta > 0) { tag = `+${delta}점`; tcls = "gold"; }
+    else if (blocks.length) { tag = "막기"; tcls = "block"; }
+    else if (kind === "pair") { const k = kindKey(gains[1]); tag = k === "g" && CARDS[gains[1]].rain ? "비광" : kindLabel(gains[1]); tcls = KPRI[k] >= 4 ? "good" : ""; }
+    else if (kind === "pair2") tag = "택1";
+    else if (kind === "take4") { tag = v.ppeok.includes(m) ? "뻑먹기" : "4장"; tcls = "good"; }
+    else if (gives.length) { tag = "⚠내줌"; tcls = "bad"; }
+    return { kind, m, F, gains, alt, bomb, shake, after, delta, done, blocks, gives, tag, tcls, can: F.length > 0 };
+  }
+
+  /* ---------------- 그리기 ---------------- */
   function render() {
     if (!M) return;
-    renderOpps(); renderTable(); renderMine(); renderHand(); renderHint(); renderOver();
+    const v = M.v;
+    A = analyze(v, M.me);
+    const W = wrap.clientWidth || 360, H = wrap.clientHeight || 600;
+    wrap.classList.toggle("short", H < 600);
+    wrap.classList.toggle("tall", H > 740);
+    wrap.classList.toggle("p3", v.n >= 3);
+    renderOpps(); renderMine(H); renderHint(); renderOver();
+    const cells = floorCells(v);
+    const lay = layout(W, cells);          // 남은 높이를 손패와 바닥이 나눠 갖는다 (둘 다 가능한 크게)
+    renderHand(lay);
+    renderTable(cells, lay.fl);
     const g = open("gostop");
     if (g) openGoStop(g); else closeGoStop();
+  }
+
+  /* 정보판 한 사람 몫 (나 · 상대 공통) */
+  function panelHTML(q) {
+    const v = M.v, me = M.me, isMe = q === me, pl = M.players[q] || { name: "?" }, P = A.P[q], sc = P.sc;
+    // 1줄: 이름 · 상태 꼬리표 · 나기까지 · 점수
+    const tags = [];
+    if (pl.kind === "ai") tags.push('<span class="gs-tg ai">AI</span>');
+    else if (pl.kind === "away") tags.push('<span class="gs-tg away">자리 비움</span>');
+    if (v.leader === q && live(v)) tags.push('<span class="gs-tg">선</span>');
+    if (!isMe) tags.push(`<span class="gs-tg" title="손패">손 ${v.sizes[q]}</span>`);
+    if (v.flips[q]) tags.push(`<span class="gs-tg" title="뒤집기만 하는 차례">뒤집기 ${v.flips[q]}</span>`);
+    if (v.go[q]) tags.push(`<span class="gs-tg go">${v.go[q]}고${P.goMul > 1 ? ` ×${P.goMul}` : ""}</span>`);
+    if (v.shook[q].length) {
+      const sh = v.shook[q], ic = sh.map(s => (s.bomb ? "💣" : "흔들")).filter((x, i, a) => a.indexOf(x) === i).join("·");
+      tags.push(`<span class="gs-tg sh" title="${sh.map(s => `${s.m}월 ${s.bomb ? "폭탄" : "흔들기"}`).join(", ")}">${ic} ×${2 ** sh.length}</span>`);
+    }
+    let needT;
+    if (P.stop) needT = isMe ? `<span class="gs-need ok">스톱 시 +${P.stop.deltas[q]}</span>`
+      : `<span class="gs-need bad">지금 나면 나 −${-P.stop.deltas[me] || 0}</span>`;
+    else needT = `<span class="gs-need${P.need <= 2 ? (isMe ? " ok" : " warn") : ""}">${v.go[q] ? "다음 고/스톱" : "나기"}까지 <b>${P.need}</b>점</span>`;
+    const head = `<div class="gs-ph">${isMe ? "" : avatarHTML(pl.name, q, "sm")}<b class="nm">${isMe ? "나" : esc(pl.name)}</b>${tags.join("")}` +
+      `<span class="gs-sp"></span>${live(v) ? needT : ""}<span class="gs-score"><b>${sc.total}</b>점</span></div>`;
+
+    // 2줄: 진행 칸 8개
+    const near = isMe ? "good" : "warn";
+    const ti = (label, val, cls, title) => `<div class="gs-ti ${cls}" title="${esc(title || "")}"><small>${label}</small><b>${val}</b></div>`;
+    const t = [];
+    const g = sc.g, gNear = g === 2 && P.missG.length;
+    t.push(ti(P.rain ? "광☂" : "광", g >= 3 ? `${g}<i>+${sc.gp}</i>` : `${g}/3`, (g >= 3 ? "done" : gNear ? near : g ? "" : "zero") + (P.gwangbak ? " bak" : ""),
+      `광 ${g}장${P.rain ? " (비광 포함 — 3광이면 2점)" : ""}${P.gwangbak ? " · 광박 위험" : ""}`));
+    t.push(ti("띠", sc.t >= 5 ? `${sc.t}<i>+${sc.t - 4}</i>` : `${sc.t}/5`, sc.t >= 5 ? "done" : sc.t === 4 ? near : sc.t ? "" : "zero", `띠 ${sc.t}장`));
+    t.push(ti("열끗", sc.y >= 5 ? `${sc.y}<i>+${sc.y - 4}</i>` : `${sc.y}/5`, sc.y >= 5 ? "done" : sc.y === 4 ? near : sc.y ? "" : "zero",
+      `열끗 ${sc.y}장${sc.guk === "y" ? " (국진 포함)" : ""}`));
+    t.push(ti("피", sc.pi >= 10 ? `${sc.pi}<i>+${sc.pp}</i>` : `${sc.pi}/10`, (sc.pi >= 10 ? "done" : sc.pi === 9 ? near : sc.pi ? "" : "zero") + (P.pibak ? " bak" : ""),
+      `피 ${sc.pi}장 (쌍피 2 · 쓰리피 3${sc.guk === "p" ? " · 국진 쌍피" : ""})${P.pibak ? " · 피박 위험" : ""}`));
+    for (const s of SETS) {
+      const st = P.sets[s];
+      t.push(st.done ? ti(SET_NAME[s], `✓<i>+${s === "go" ? 5 : 3}</i>`, "done", `${SET_NAME[s]} 완성`)
+        : st.dead ? ti(SET_NAME[s], `✕`, "dead", `${SET_NAME[s]} — 다른 사람이 이미 한 장을 먹어 불가`)
+        : ti(SET_NAME[s], `${st.have}/3`, st.near ? near : st.have ? "" : "zero",
+          st.near ? `${SET_NAME[s]} 1장 남음: ${st.miss.map(cardName).join(", ")}` : `${SET_NAME[s]} ${st.have}/3`));
+    }
+
+    // 3줄: 마지막 차례 · 위험 · 누적
+    const cur = v.cur && v.cur.p === q ? v.cur : null;
+    const L = cur ? null : lastBy[q];
+    let mv;
+    if (cur) mv = `${cur.played.length ? cur.played.map(tok).join("") : "<em>뒤집기</em>"}${cur.flipped.length ? `<i>→</i>${cur.flipped.map(tok).join("")}` : ""}<em>…</em>`;
+    else if (L) mv = moveHTML(L, me);
+    else mv = `<em class="gs-faint">${live(v) ? "아직 안 냄" : ""}</em>`;
+    const fresh = (cur || (v.last && L === lastBy[v.last.p] && v.last.p === q)) ? " fresh" : "";
+    const dg = [];
+    const dcls = isMe ? "gs-dg" : "gs-dg opp";
+    if (P.pibak) dg.push(`<span class="${dcls}" title="${isMe ? "상대가 피로 나면 ×2" : "내가 피로 나면 ×2"}">피박 위험: 피 ${P.lpi}</span>`);
+    if (P.gwangbak) dg.push(`<span class="${dcls}" title="광으로 나면 ×2">광박 위험</span>`);
+    if (P.meong && isMe) dg.push(`<span class="${dcls}" title="상대 열끗 7장 이상으로 나면 ×2">멍박 주의</span>`);
+    const foot = `<div class="gs-pf"><span class="gs-lm${fresh}">${mv}</span>${dg.join("")}<span class="gs-tot">누적 <b>${signed(v.totals[q])}</b></span></div>`;
+    return head + `<div class="gs-tiles">${t.join("")}</div>` + foot;
+  }
+
+  function moveHTML(L, me) {
+    let s = "";
+    if (L.kind === "flip") s += "<em>뒤집기</em>";
+    else if (L.kind === "bomb") s += `<em>💣</em>${L.played.map(tok).join("")}`;
+    else s += L.played.map(tok).join("");
+    if (L.flipped.length) s += `<i>→</i>${L.flipped.map(tok).join("")}`;
+    s += L.captured.length ? `<span class="got">+${L.captured.length}장</span>` : `<span class="miss">못 먹음</span>`;
+    const combos = L.combos.filter(c => c !== "흔들기" && c !== "폭탄");
+    if (combos.length) s += `<span class="cb">${combos.join("·")}!</span>`;
+    if (L.stolen.length) {
+      const fromMe = L.stolen.filter(x => x.from === me).length;
+      s += L.p === me ? `<span class="got">피 ${L.stolen.length}장 뺏음</span>` : fromMe ? `<span class="bad">내 피 −${fromMe}</span>` : `<span class="cb">피 ${L.stolen.length}장 뺏음</span>`;
+    }
+    return s;
   }
 
   function renderOpps() {
     const v = M.v, me = M.me, box = R("opps");
     box.innerHTML = "";
     for (let k = 1; k < v.n; k++) {
-      const q = (me + k) % v.n, pl = M.players[q] || { name: "?" }, sc = v.scores[q];
-      const turn = ["play", "choose", "gostop"].includes(v.phase) && v.turn === q;
-      const tags = [`<span class="gs-tag" title="손패">🂠 ${v.sizes[q]}</span>`];
-      if (v.flips[q]) tags.push(`<span class="gs-tag">뒤집기 ${v.flips[q]}</span>`);
-      if (v.go[q]) tags.push(`<span class="gs-tag go">${v.go[q]}고</span>`);
-      for (const s of v.shook[q]) tags.push(`<span class="gs-tag sh">${s.bomb ? "💣" : "흔들"} ${s.m}월</span>`);
-      const b = el("div", "gs-opp" + (turn ? " turn" : ""));
+      const q = (me + k) % v.n;
+      const b = el("div", "gs-p gs-opp" + (live(v) && v.turn === q ? " turn" : ""), panelHTML(q));
       b.setAttribute("role", "button");
-      b.innerHTML = `<div class="gs-oh">${avatarHTML(pl.name, q, "sm")}<b class="nm">${esc(pl.name)}</b>` +
-        (pl.kind === "ai" ? '<span class="ai">AI</span>' : pl.kind === "away" ? '<span class="away">자리 비움</span>' : "") +
-        `${tags.join("")}<span class="gs-sc"><b>${sc.total}</b>점</span></div>` +
-        `<div class="gs-og">${chips(v, q)}<span class="gs-tot">누적 ${signed(v.totals[q])}</span></div>`;
+      b.setAttribute("aria-label", `${name(q)} 님 먹은 패 보기`);
       b.onclick = () => showCaps(q);
       box.appendChild(b);
     }
   }
-  /* 상대가 먹은 패: 종류별 장수 + 곧 날 것 같은 약 경고 */
-  function chips(v, q) {
-    const sc = v.scores[q];
-    const out = [["g", "광", sc.g], ["t", "띠", sc.t], ["y", "열", sc.y], ["p", "피", sc.pi]]
-      .map(([k, l, c]) => `<span class="gs-chip c-${k}${c ? "" : " zero"}">${l} <b>${c}</b></span>`);
-    const dead = set => v.caps.some((cap, r) => r !== q && cap.some(id => CARDS[id].set === set));
-    const warn = [];
-    for (const s of ["hong", "cheong", "cho", "go"]) if (sc.sets[s] === 2 && !dead(s)) warn.push(`${SET_NAME[s]} 2/3`);
-    if (sc.g === 2) warn.push("광 2/3");
-    if (warn.length) out.push(`<span class="gs-chip warn">⚠ ${warn.join(" · ")}</span>`);
-    return out.join("");
+
+  function renderMine(H) {
+    const v = M.v, me = M.me, sc = v.scores[me], box = R("mine");
+    box.className = "gs-p gs-mine" + (live(v) && v.turn === me ? " turn" : "");
+    box.innerHTML = panelHTML(me);
+    if (H < 690 || !v.caps[me].length) return;                     // 작은 화면: 먹은 패 그림은 눌러서 본다 (진행 칸에 장수가 다 있다)
+    const groups = { g: [], t: [], y: [], p: [] };
+    for (const c of v.caps[me]) groups[groupOf(c, sc.guk)].push(c);
+    const piles = el("div", "gs-piles");
+    for (const [k] of GROUPS) {
+      const cs = groups[k];
+      piles.appendChild(el("div", `gs-pc p-${k}`, cs.map(c => hwHTML(c, "mini" + (anim.has(c) ? " in" : ""))).join("") || '<span class="gs-faint">—</span>'));
+    }
+    box.appendChild(piles);
+    // 겹치기: 묶음 폭에 맞춰 카드 간격을 줄인다
+    const first = piles.querySelector(".hw"), cw = first ? first.offsetWidth : 20;
+    for (const pc of piles.children) {
+      const cards = pc.querySelectorAll(".hw"), k = cards.length;
+      if (k < 2) continue;
+      const W = pc.clientWidth || 70;
+      const step = Math.min(cw + 2, (W - cw) / (k - 1));
+      for (let i = 1; i < k; i++) cards[i].style.marginLeft = (step - cw) + "px";
+    }
   }
 
-  function renderTable() {
-    const v = M.v, me = M.me;
-    R("deck").innerHTML = v.deck ? `${hwHTML(null, "sm")}<b>${v.deck}</b>` : `<span class="gs-dim">더미 끝</span>`;
-    R("info").innerHTML = `<b>${v.round}</b>/${v.rounds}판` + (v.nagari > 1 ? `<span class="gs-nag">나가리 ×${v.nagari}</span>` : "") +
-      `<small>${v.th}점 나기</small>`;
-    // 방금 (또는 지금 진행 중인) 차례
-    const src = v.cur || v.last, lm = R("lastmv");
-    if (src) {
-      const cs = src.played.map(c => hwHTML(c, "sm")).join("") + (src.flipped.length ? `<i>→</i>${src.flipped.map(c => hwHTML(c, "sm")).join("")}` : "");
-      const got = !v.cur && v.last && v.last.captured.length ? `<span class="got">+${v.last.captured.length}</span>` : v.cur ? '<span class="got wait">…</span>' : "";
-      lm.innerHTML = `<span class="who">${who(src.p)}</span><span class="cs">${src.played.length ? "" : "<em>뒤집기</em>"}${cs}</span>${got}`;
-    } else lm.innerHTML = "";
-
-    // 바닥: 월별로 겹쳐 쌓기
-    const fl = R("floor");
-    fl.innerHTML = "";
+  /* 바닥 칸: 더미 + 월별 묶음 (+ 고른 패가 놓일 빈자리) */
+  function floorCells(v) {
     const byM = new Map();
     for (const c of v.floor) { const m = monthOf(c); if (!byM.has(m)) byM.set(m, []); byM.get(m).push(c); }
+    const selM = sel && !isBonus(sel) ? monthOf(sel) : 0;
+    const cells = [{ deck: true, d: 1 }];
+    for (const m of [...byM.keys()].sort((a, b) => a - b)) cells.push({ m, cs: byM.get(m), d: byM.get(m).length });
+    if (selM && !byM.has(selM)) cells.push({ ghost: selM, d: 1 });
+    return cells;
+  }
+
+  /* 손패 줄 수 · 카드 크기와 바닥 카드 크기를 함께 정한다: 둘 중 작은 쪽이 가장 커지게 */
+  function layout(W, cells) {
+    const v = M.v, hand = R("hand"), table = R("table");
+    hand.style.height = "0px";
+    const T0 = table.clientHeight || 300, Wf = table.clientWidth || W - 12;    // 손패 높이가 0 일 때 펠트 높이
+    const depths = cells.map(x => x.d);
+    const count = v.hand.length + (v.flips[M.me] ? 1 : 0);
+    const tagH = 14, gap = 5;
+    if (!count) return { rows: 1, per: 1, hc: 40, hh: 44, fl: floorLayout(depths, Wf, T0 - 44, W) };
+    let best = null;
+    for (let rows = 1; rows <= Math.min(3, count); rows++) {
+      const per = Math.ceil(count / rows);
+      if (rows > 1 && Math.ceil(count / (rows - 1)) === per) continue;
+      const byW = Math.floor((W - 12 - (per - 1) * gap) / per);
+      for (let hc = Math.min(byW, 84); hc >= 28; hc -= 2) {
+        const hh = rows * (Math.ceil(hc * 1.55) + tagH) + (rows - 1) * gap;
+        const fl = floorLayout(depths, Wf, T0 - hh, W);
+        const s = Math.min(hc, fl.cw) + 0.01 * (hc + fl.cw) - (rows - 1) * 2;     // 같으면 한 줄이 보기 편하다
+        if (!best || s > best.s) best = { rows, per, hc, hh, fl, s };
+      }
+    }
+    if (!best) { const hc = 28; best = { rows: 1, per: count, hc, hh: Math.ceil(hc * 1.55) + tagH, fl: null }; best.fl = floorLayout(depths, Wf, T0 - best.hh, W); }
+    best.fl.cw = Math.max(24, Math.floor(best.fl.cw));
+    return best;
+  }
+
+  function renderTable(cells, L) {
+    const v = M.v, me = M.me, fl = R("floor");
     const selM = sel && !isBonus(sel) ? monthOf(sel) : 0;
     const ask = open("choose");
     const opts = ask && v.ch ? v.ch.options : [];
     const cur = new Set(v.cur ? [...v.cur.played, ...v.cur.flipped] : []);
-    const months = [...byM.keys()].sort((a, b) => a - b);
-    if (selM && !byM.has(selM)) months.push(-selM);          // 낼 카드가 놓일 빈자리 표시
-    for (const mm of months) {
-      if (mm < 0) { fl.appendChild(el("div", "gs-stack ghost", `<span>${-mm}월<br>여기에</span>`)); continue; }
-      const cs = byM.get(mm);
-      const st = el("div", "gs-stack" + (mm === selM ? " match" : "") + (v.ppeok.includes(mm) ? " ppeok" : ""));
-      st.style.height = `calc(var(--ch) + ${(cs.length - 1) * OFF}px)`;
+    const handM = new Set(v.hand.filter(c => !isBonus(c)).map(monthOf));
+    const cw = L.cw, ch = Math.round(cw * 1.55), off = Math.round(ch * OFFR);
+    R("table").style.setProperty("--fw", cw + "px");
+    R("table").style.setProperty("--fh", ch + "px");
+    fl.style.gridTemplateColumns = `repeat(${L.c}, ${cw}px)`;
+    fl.innerHTML = "";
+    for (const x of cells) {
+      if (x.deck) {
+        fl.appendChild(el("div", "gs-stack gs-deck", `<div class="hw back"><i></i></div><div class="gs-dk"><b>${v.deck || "끝"}</b><small>${v.round}/${v.rounds}판</small>` +
+          `${v.nagari > 1 ? `<span class="gs-nag">×${v.nagari}</span>` : ""}</div>`));
+        continue;
+      }
+      if (x.ghost) { fl.appendChild(el("div", "gs-stack ghost", `<span>${x.ghost}월<br>여기에</span>`)); continue; }
+      const mm = x.m, cs = x.cs;
+      const st = el("div", "gs-stack" + (mm === selM ? " match" : "") + (handM.has(mm) ? " hm" : "") + (v.ppeok.includes(mm) ? " ppeok" : ""));
+      st.style.height = (ch + (cs.length - 1) * off) + "px";
       cs.forEach((c, i) => {
         const cls = [];
         if (anim.has(c)) cls.push("in");
         if (mm === selM) cls.push("can");
         if (opts.includes(c)) cls.push("pick");
         if (cur.has(c)) cls.push("cur");
-        const d = el("div", "gs-fc", hwHTML(c, cls.join(" ")));
-        d.style.top = i * OFF + "px";
+        const thr = A.threat(c), mn = A.mineNeed(c);
+        const d = el("div", "gs-fc", hwHTML(c, cls.join(" ")) +
+          (thr.length ? `<span class="gs-mk bad" title="${esc(thr.map(t => `${name(t.q)} ${t.label}`).join(", "))} 완성 패">!</span>`
+            : mn.length ? `<span class="gs-mk good" title="내 ${esc(mn.map(t => t.label).join(", "))} 완성 패">★</span>` : ""));
+        d.style.top = i * off + "px";
         if (opts.includes(c)) { d.classList.add("tap"); d.onclick = () => send({ take: c }, "choose"); }
         st.appendChild(d);
       });
       if (v.ppeok.includes(mm)) st.insertAdjacentHTML("beforeend", '<span class="gs-pk">뻑</span>');
       fl.appendChild(st);
     }
-    if (!v.floor.length && !selM) fl.innerHTML = '<div class="gs-dim">바닥이 비었습니다</div>';
 
-    // 고르기: 큰 카드 두 장
+    // 고르기: 큰 카드 두 장 + 고르면 어떻게 되는지
     const pk = R("pick");
     if (opts.length) {
       pk.hidden = false;
+      const x = v.ch.stage === "play" ? (v.cur && v.cur.played[0]) : (v.cur && v.cur.flipped[v.cur.flipped.length - 1]);
+      const base = A.P[me].sc;
       pk.innerHTML = `<div class="gs-pick-t">${v.ch.stage === "play" ? "낸" : "뒤집은"} ${v.ch.m}월 패로 <b>가져갈 카드</b>를 고르세요</div><div class="gs-pick-c"></div>`;
       const row = pk.querySelector(".gs-pick-c");
       for (const c of opts) {
-        const b = el("button", "gs-pbtn", hwHTML(c, "lg") + `<small>${esc(cardName(c))}</small>`);
+        const after = scoreOf([...v.caps[me], ...(x ? [x] : []), c]);
+        const done = after.items.map(i => i[0]).filter(l => SET_ITEM.test(l) && !base.items.some(y => y[0] === l));
+        const delta = after.total - base.total;
+        const thr = A.threat(c);
+        const note = done.length ? `<em class="gold">${done.join("·")} 완성 +${delta}</em>` : delta > 0 ? `<em class="gold">+${delta}점</em>`
+          : thr.length ? `<em class="block">${esc(thr.map(t => `${name(t.q)} ${t.label}`).join(", "))} 막기</em>` : "";
+        const b = el("button", "gs-pbtn", hwHTML(c, "lg") + `<small>${esc(cardName(c))}</small>${note}`);
         b.onclick = () => send({ take: c }, "choose");
         row.appendChild(b);
       }
     } else pk.hidden = true;
   }
 
-  function renderMine() {
-    const v = M.v, me = M.me, sc = v.scores[me], box = R("mine");
-    const groups = { g: [], t: [], y: [], p: [] };
-    for (const c of v.caps[me]) groups[groupOf(c, sc.guk)].push(c);
-    const tags = (v.go[me] ? `<span class="gs-tag go">${v.go[me]}고</span>` : "") +
-      v.shook[me].map(s => `<span class="gs-tag sh">${s.bomb ? "💣" : "흔들"} ${s.m}월</span>`).join("");
-    const turn = ["play", "choose", "gostop"].includes(v.phase) && v.turn === me;
-    box.className = "gs-mine" + (turn ? " turn" : "");
-    box.innerHTML = `<div class="gs-mh"><b class="gs-my">${sc.total}<small>점</small></b>` +
-      `<span class="gs-brk">광 ${sc.gp} · 띠 ${sc.tp} · 열끗 ${sc.yp} · 피 ${sc.pp}</span>${tags}` +
-      `<span class="gs-tot">누적 ${signed(v.totals[me])}</span></div><div class="gs-piles"></div>`;
-    const piles = box.querySelector(".gs-piles");
-    for (const [k, label] of GROUPS) {
-      const cs = groups[k], count = k === "p" ? sc.pi : cs.length;
-      const p = el("div", `gs-pile p-${k}`, `<div class="gs-pc">${cs.map(c => hwHTML(c, "mini" + (anim.has(c) ? " in" : ""))).join("")}</div>` +
-        `<span class="gs-pl">${label} <b>${count}</b></span>`);
-      piles.appendChild(p);
+  /* 바닥 격자: 줄 수를 바꿔 보며 카드가 가장 커지는 배치 */
+  function floorLayout(depths, Wf, Hf, W) {
+    const gx = 6, gy = 8, px = 8, py = 9, cap = Math.min(112, Math.floor((W - 28) / 3.4));
+    let best = null;
+    for (let r = 1; r <= Math.min(4, depths.length); r++) {
+      const c = Math.ceil(depths.length / r), rows = Math.ceil(depths.length / c);
+      const byW = (Wf - 2 * px - (c - 1) * gx) / c;
+      let units = 0;
+      for (let i = 0; i < rows; i++) units += 1.55 * (1 + (Math.max(...depths.slice(i * c, (i + 1) * c)) - 1) * OFFR);
+      const byH = (Hf - 2 * py - (rows - 1) * gy) / units;
+      const cw = Math.min(byW, byH);
+      if (!best || cw > best.cw + 0.5) best = { c, rows, cw };
     }
-    // 겹치기: 묶음 폭에 맞춰 카드 간격을 줄인다
-    for (const pc of piles.querySelectorAll(".gs-pc")) {
-      const cards = pc.children, k = cards.length;
-      if (k < 2) continue;
-      const W = pc.clientWidth || 70, cw = 20;
-      const step = Math.min(cw + 2, (W - cw) / (k - 1));
-      for (let i = 1; i < k; i++) cards[i].style.marginLeft = (step - cw) + "px";
-    }
+    best.cw = Math.min(best.cw, cap);
+    return best;
   }
 
-  function renderHand() {
+  function renderHand(lay) {
     const v = M.v, me = M.me, hand = R("hand");
     const ask = open("play");
     const flips = v.flips[me] || 0;
     const count = v.hand.length + (flips ? 1 : 0);
     hand.innerHTML = "";
+    const cw = lay.hc, per = lay.per;
+    hand.style.setProperty("--hw", cw + "px");
+    hand.style.height = lay.hh + "px";
     if (!count) {
-      hand.style.gridTemplateColumns = "1fr";
-      hand.innerHTML = `<div class="gs-dim gs-nohand">${["roundEnd", "over"].includes(v.phase) ? "" : "손패를 다 냈습니다"}</div>`;
+      hand.style.maxWidth = "none";
+      hand.innerHTML = `<div class="gs-faint gs-nohand">${["roundEnd", "over"].includes(v.phase) ? "" : "손패를 다 냈습니다"}</div>`;
       return;
     }
-    const W = hand.clientWidth || 340, tall = (wrap.clientHeight || 0) > 680;
-    const per = count <= 7 ? count : Math.ceil(count / 2);            // 8장 이상이면 두 줄
-    const cw = Math.max(34, Math.min(count > 7 ? (tall ? 52 : 46) : (tall ? 58 : 54), Math.floor((W - (per - 1) * 5) / per)));
-    hand.style.setProperty("--hw", cw + "px");
-    hand.style.gridTemplateColumns = `repeat(${per}, ${cw}px)`;
+    hand.style.maxWidth = (per * cw + (per - 1) * 5) + "px";
     for (const c of v.hand) {
-      const m = isBonus(c) ? 0 : monthOf(c);
-      const matches = m ? v.floor.filter(x => monthOf(x) === m).length : 0;
-      const sp = m && v.can ? (v.can.bomb.includes(m) ? "💣" : v.can.shake.includes(m) ? "흔들" : "") : "";
+      const I = handInfo(v, c);
       const cls = [];
       if (c === sel) cls.push("sel");
-      if (ask && (matches || isBonus(c))) cls.push("can");
+      if (I.can) cls.push("can");
       if (anim.has(c)) cls.push("in");
-      const b = el("button", "gs-hc", hwHTML(c, cls.join(" ")) + (sp ? `<span class="gs-sp">${sp}</span>` : ""));
-      b.setAttribute("aria-label", cardName(c));
+      const sp = I.bomb ? "" : I.shake ? '<span class="gs-sb">흔들</span>' : "";
+      const b = el("button", "gs-hc" + (I.can ? "" : " nm"), hwHTML(c, cls.join(" ")) + sp + `<span class="gs-ht ${I.tcls}">${I.tag || "&nbsp;"}</span>`);
+      b.setAttribute("aria-label", cardName(c) + (I.tag ? ` — ${I.tag}` : ""));
       b.onclick = () => tap(c);
       hand.appendChild(b);
     }
     if (flips) {
-      const b = el("button", "gs-hc gs-flip", `<div class="hw back${ask ? " can" : ""}"><i></i></div><span class="gs-fl">뒤집기<br>×${flips}</span>`);
+      const b = el("button", "gs-hc gs-flip", `<div class="hw back${ask ? " can" : ""}"><i></i></div><span class="gs-fl">뒤집기<br>×${flips}</span><span class="gs-ht">&nbsp;</span>`);
       b.setAttribute("aria-label", "패 뒤집기만 하기");
       b.onclick = () => { if (open("play")) send({ flip: true }, "play"); else ctx.toast("내 차례에 누르세요"); };
       hand.appendChild(b);
     }
   }
 
-  /* 고른 카드를 내면 어떻게 되는지 */
+  /* 고른 카드를 내면 어떻게 되는지 — 점수 변화까지 */
   function describe(v, c) {
-    if (isBonus(c)) return `${esc(cardName(c))} — 내면 바로 내 피가 되고 한 장 더 받습니다`;
-    const m = monthOf(c), F = v.floor.filter(x => monthOf(x) === m);
+    if (isBonus(c)) return `${esc(cardName(c))} — 내면 바로 내 피(+${CARDS[c].pv})가 되고 한 장 더 받습니다`;
+    const I = handInfo(v, c), m = I.m, F = I.F;
     let t;
-    if (v.can && v.can.bomb.includes(m)) t = `${m}월 3장 + 바닥 1장 — <b>폭탄</b> 가능`;
-    else if (!F.length) t = `바닥에 ${m}월이 없어 그대로 깔립니다` + (v.can && v.can.shake.includes(m) ? " (흔들기 가능)" : "");
-    else if (F.length === 1) t = `바닥 ${esc(cardName(F[0]))}와 짝`;
-    else if (F.length === 2) t = `바닥 ${m}월 2장 중 하나를 골라 먹습니다`;
-    else t = v.ppeok.includes(m) ? `뻑 3장을 모두 먹고 피를 뺏습니다!` : `${m}월 3장을 모두 먹습니다!`;
+    if (I.bomb) t = `<b>💣 폭탄</b> 가능 — ${m}월 4장 + 상대마다 피 1장`;
+    else if (I.kind === "lay") t = `${m}월은 바닥에 없어 깔립니다` + (I.shake ? " · <b>흔들기</b> 가능" : "");
+    else if (I.kind === "pair") t = `바닥 ${esc(cardName(I.gains[1]))}와 짝`;
+    else if (I.kind === "pair2") t = `${esc(kindLabel(F[0]))}·${esc(kindLabel(F[1]))} 중 골라 먹기`;
+    else t = v.ppeok.includes(m) ? "뻑 3장 모두 먹고 피 뺏기" : `${m}월 3장 모두 먹기`;
+    if (I.delta > 0) {
+      const P = A.P[M.me], now = P.sc.total, aft = I.after.total;
+      t += ` → <b class="gold">${I.done.length ? I.done.join("·") + " 완성 " : ""}+${I.delta}점</b> (${now}→${aft}${aft >= P.goal ? " · 날 수 있음" : ""})`;
+    }
+    if (I.blocks.length) t += ` · <b class="block">${esc(I.blocks.join(", "))} 막기</b>`;
+    if (I.gives.length) t += ` · <b class="bad">⚠ ${esc(I.gives.join(", "))} 재료를 내줌</b>`;
     return t;
   }
 
@@ -254,11 +477,12 @@ export function mount(root, ctx) {
     else if (v.phase === "roundEnd") t = v.round >= v.rounds ? "마지막 판이 끝났습니다" : "곧 다음 판이 시작됩니다";
     else if (open("choose")) t = "<b>가져갈 바닥 카드</b>를 고르세요";
     else if (open("gostop")) t = "<b>고? 스톱?</b>";
-    else if (open("play")) t = sel ? `${describe(v, sel)} — <b>한 번 더 누르면 냅니다</b>` : v.hand.length ? "<b>내 차례</b> — 낼 카드를 누르세요" : "<b>내 차례</b> — 「뒤집기」를 누르세요";
+    else if (open("play")) t = sel ? `<b>다시 누르면 냄</b> · ${describe(v, sel)}`
+      : v.hand.length ? "<b>내 차례</b> — 낼 카드를 누르세요 (아래 글씨: 먹는 패 · 점수)" : "<b>내 차례</b> — 「뒤집기」를 누르세요";
     else if (sel) t = describe(v, sel);
     else if (v.turn === me) t = "…";
-    else t = `${esc(name(v.turn))} 님 ${v.phase === "choose" ? "카드 고르는 중" : v.phase === "gostop" ? "고/스톱 고민 중" : "차례"}`;
-    h.innerHTML = t;
+    else t = `${esc(name(v.turn))} 님 ${v.phase === "choose" ? "카드 고르는 중" : v.phase === "gostop" ? "고/스톱 고민 중" : "차례"} — 손패를 눌러 미리 볼 수 있습니다`;
+    h.innerHTML = `<span>${t}</span>`;
   }
 
   /* ---------------- 판 결과 ---------------- */
@@ -299,12 +523,13 @@ export function mount(root, ctx) {
     if (!r.losers || !r.losers.length) return "";
     const rows = r.losers.map(l => {
       const t = [];
-      if (l.pibak) t.push("피박 ×2");
+      if (l.pibak) t.push(`피박 ×2 <small>(피 ${l.pi})</small>`);
       if (l.gwangbak) t.push("광박 ×2");
       if (l.meongbak) t.push("멍박 ×2");
       if (l.gobak) t.push("고박 — 두 사람 몫");
       if (l.covered) t.push("고박 덕에 면제");
-      return `<tr><td>${who(l.p)}</td><td>${t.map(x => `<span class="gs-mul">${x}</span>`).join("") || '<span class="gs-dim">배수 없음</span>'}</td><td class="pay">−${l.pay}</td></tr>`;
+      const calc = l.mul > 1 && !l.covered ? `<small class="gs-pcalc">${l.amount / l.mul}×${l.mul}</small>` : "";
+      return `<tr><td>${who(l.p)}</td><td>${t.map(x => `<span class="gs-mul">${x}</span>`).join("") || '<span class="gs-faint">배수 없음</span>'}</td><td class="pay">${calc}−${l.pay}</td></tr>`;
     }).join("");
     return `<table class="gs-pay"><tbody>${rows}</tbody></table>`;
   }
@@ -332,6 +557,15 @@ export function mount(root, ctx) {
         lines.push(`<li><b>스톱</b>: 지금 끝내고 <b>${stopGain}점</b>을 받습니다 — ${mults.join(", ")}</li>`);
       }
       lines.push(`<li><b>${goN}고</b>: 판을 계속합니다. ${goN <= 2 ? `+${goN}점` : `점수에 ×${2 ** (goN - 2)}`} — 다음에 점수가 더 나야 다시 고/스톱을 고를 수 있습니다.</li>`);
+      // 상대 위협: 점수 · 1장 남은 약
+      const thr = [];
+      for (const P of A.P) {
+        if (P.q === me) continue;
+        const near = SETS.filter(s => P.sets[s].near).map(s => SET_NAME[s]);
+        if (P.sc.g === 2 && P.missG.length) near.push("3광");
+        thr.push(`${who(P.q)} ${P.sc.total}점 (나기까지 ${P.need})${near.length ? ` · <b>${near.join("·")} 1장 남음</b>` : ""}`);
+      }
+      lines.push(`<li>상대: ${thr.join(" / ")}</li>`);
       lines.push(`<li>상대가 먼저 나면 내가 집니다${v.n === 3 ? " — <b>고박</b>: 두 사람 몫을 혼자 냅니다" : ""}. 아무도 못 나면 나가리.</li>`);
       lines.push(`<li>내 남은 패 ${v.hand.length + (v.flips[me] || 0)}장 · 더미 ${v.deck}장</li>`);
       box.appendChild(el("ul", "gs-golist", lines.join("")));
@@ -359,7 +593,7 @@ export function mount(root, ctx) {
         const guk = sc.guk && cs.includes("9a") ? ` <small>(9월 국진을 ${k === "p" ? "쌍피" : "열끗"}로 셈)</small>` : "";
         box.insertAdjacentHTML("beforeend", `<div class="gs-mg"><div class="gs-mgh">${label} ${k === "p" ? `${sc.pi}장 <small>(쌍피 2 · 쓰리피 3)</small>` : `${cs.length}장`}` +
           ` · <b>${pts[k]}점</b>${guk}</div>` +
-          `<div class="gs-mgc">${cs.map(c => hwHTML(c, "md")).join("") || '<span class="gs-dim">없음</span>'}</div></div>`);
+          `<div class="gs-mgc">${cs.map(c => hwHTML(c, "md")).join("") || '<span class="gs-faint">없음</span>'}</div></div>`);
       }
     });
   }
@@ -409,7 +643,7 @@ export function mount(root, ctx) {
   }
   function events(m) {
     const me = m.me, S = ctx.sound;
-    for (const e of m.ev) {
+    for (const e of m.ev || []) {
       if (e.type === "deal") S.deal();
       else if (e.type === "play") S.place();
       else if (e.type === "flip") later(() => S.flip(), 230);
@@ -429,12 +663,16 @@ export function mount(root, ctx) {
     }
   }
 
-  let lastW = 0;
-  function onResize() { const w = wrap.clientWidth; if (w !== lastW) { lastW = w; render(); } }
+  let lastW = 0, lastH = 0;
+  function onResize() {
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    if (w !== lastW || h !== lastH) { lastW = w; lastH = h; render(); }
+  }
   window.addEventListener("resize", onResize);
 
   return {
     update,
+    ticker: false,                 // 마지막 차례는 각 정보판에 직접 보인다
     destroy() {
       window.removeEventListener("resize", onResize);
       for (const t of timers) clearTimeout(t);

@@ -67,6 +67,9 @@ function refill(S, ev) {
   const t = S.discard.pop();
   S.deck = shuffle(S, S.discard).concat(S.deck);
   S.discard = [t];
+  // 섞여 들어간 카드는 다시 숨은 카드 — 최근 기록 · 마지막 행동에서도 지운다
+  S.recent = S.recent.filter(r => r.c === t);
+  S.act = S.act.map(a => (a && a.c && a.c !== t ? null : a));
   ev.push({ type: "shuffle", text: "버린 카드를 섞어 새 더미를 만들었습니다" });
 }
 /* p 가 n 장 받는다 — 모자라면 받을 수 있는 만큼만. 받은 카드 배열 */
@@ -159,6 +162,9 @@ function doPlay(S, p, a, ev) {
     else e.text = `{${p}} 님이 ${nm(c)}을(를) 냈습니다`;
   }
   ev.push(e);
+  S.recent.push(r === 7 ? { p, c, s: a.suit } : { p, c });
+  if (S.recent.length > 6) S.recent.shift();
+  S.act[p] = { c };
   if (!hand.length) { finish(S, p, ev); if (S.phase !== "play") return; }
 
   // 다음 차례
@@ -196,6 +202,7 @@ function doDraw(S, p, ev) {
   else if (pen) text = `{${p}} 님이 공격을 받아 ${got.length}장을 가져갔습니다`;
   else text = `{${p}} 님이 카드를 한 장 받았습니다`;
   ev.push({ type: "draw", p, n: got.length, cards: got, reason: pen ? "penalty" : "pass", text });
+  S.act[p] = { d: got.length, pen: pen > 0 };
   bustCheck(S, p, ev);
   if (S.phase === "play") S.turn = nextAlive(S, p);
 }
@@ -208,6 +215,7 @@ function doCall(S, p, a, ev) {
     const got = drawCards(S, o, 1, ev);
     ev.push({ type: "call", p, owner: o, safe: false, text: `{${p}} 님이 {${o}} 님을 잡았습니다! {${o}} 님 ${got.length}장 추가` });
     ev.push({ type: "draw", p: o, n: got.length, cards: got, reason: "catch" });
+    S.act[o] = { d: got.length, pen: true, catch: true };
     bustCheck(S, o, ev);
     return;
   }
@@ -398,12 +406,13 @@ export default {
     };
     const S = {
       n, rs: seed >>> 0, set, deck: [], discard: [], hands: [], st: [], place: [], note: [], miss: [], lastSuit: [],
-      done: [], busted: [], dir: 1, turn: 0, attack: 0, need: null, again: false, call: null, phase: "play", moves: 0, last: "", seen: {}
+      done: [], busted: [], recent: [], act: [], dir: 1, turn: 0, attack: 0, need: null, again: false, call: null, phase: "play", moves: 0, last: "", seen: {}
     };
     S.deck = shuffle(S, [...deck52(), "JB", "JC"]);
-    for (let p = 0; p < n; p++) { S.hands.push([]); S.st.push("in"); S.place.push(0); S.note.push(""); S.miss.push([]); S.lastSuit.push(null); }
+    for (let p = 0; p < n; p++) { S.hands.push([]); S.st.push("in"); S.place.push(0); S.note.push(""); S.miss.push([]); S.lastSuit.push(null); S.act.push(null); }
     for (let i = 0; i < set.hand; i++) for (let p = 0; p < n; p++) S.hands[p].push(S.deck.pop());
     do S.discard.push(S.deck.pop()); while (!isPlain(top(S)) && S.deck.length);
+    S.recent.push({ p: -1, c: top(S) });                  // 첫 카드 (p: -1)
     S.turn = randInt(S, n);
     S.last = `첫 카드 ${nm(top(S))} — {${S.turn}} 님부터`;
     return S;
@@ -494,6 +503,8 @@ export default {
       sizes: S.hands.map(h => h.length), st: S.st.slice(), place: S.place.slice(), hand,
       legal: myTurn ? legalCards(S, me) : [],
       call: S.call ? { p: S.call.p, waiting: callWaiting(S).includes(me) } : null,
+      recent: S.recent.map(r => ({ ...r })),          // 최근에 낸 카드 (오래된 것부터, 섞이면 비워짐)
+      act: S.act.map(a => (a ? { ...a } : null)),      // 사람마다 마지막 행동: {c} 냄 · {d, pen, catch?} 받음
       last: S.last, set: { ...S.set }, status
     };
   },

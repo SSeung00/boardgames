@@ -207,7 +207,7 @@ export function preflopEq(a, b, nOpp) {
   return PRE[k];
 }
 /* 같은 인원에서 이 패가 상위 몇 % 인가 (1 = 최고). 1326가지 조합의 비중으로 센다 */
-function preflopPct(a, b, nOpp) {
+export function preflopPct(a, b, nOpp) {
   const cls = handClass(a, b), k = cls * 8 + nOpp;
   if (PCT[k] < 0) {
     const eqs = [];
@@ -350,6 +350,8 @@ function startHand(S, ev) {
   if (up) ev.push({ type: "notice", text: `블라인드가 ${fmt(S.sb)}/${fmt(S.bb)} 로 올랐습니다` });
   putChips(S, S.sbSeat, Math.min(S.sb, S.chips[S.sbSeat]));
   putChips(S, S.bbSeat, Math.min(S.bb, S.chips[S.bbSeat]));
+  // 이번 판 행동 기록 (화면이 자리마다 · 펠트에 '방금 일어난 일' 로 보여 준다)
+  S.log = [{ st: 0, p: S.sbSeat, a: "sb", to: S.bet[S.sbSeat] }, { st: 0, p: S.bbSeat, a: "bb", to: S.bet[S.bbSeat] }];
   S.curBet = S.bb;        // 빅 블라인드가 모자라게 올인했어도 다른 사람은 빅 블라인드 전액을 맞춰야 한다
   S.minRaise = S.bb;
   S.phase = "bet";
@@ -603,6 +605,7 @@ export default {
     <li>족보: 하이카드 &lt; 원페어 &lt; 투페어 &lt; 트리플 &lt; 스트레이트 &lt; 플러시 &lt; 풀하우스 &lt; 포카드 &lt; 스트레이트 플러시 &lt; 로열 플러시. A-2-3-4-5 도 스트레이트입니다.</li>
     <li>블라인드 상승: 8판마다 두 배 (10/20 → 20/40 → …). 고정을 골라도 '한 명 남을 때까지' 면 100판 뒤부터는 8판마다 오릅니다.</li>
     <li>칩이 0 이 되면 탈락합니다. 버튼은 칩이 있는 사람 사이에서만 돕니다.</li>
+    <li>화면 도우미: 내 패의 현재 족보와 그 패를 만드는 카드(금색 테두리), 콜 금액 · 콜 후 팟 · <b>팟 오즈</b>(콜 금액 ÷ 콜 후 팟 — 이길 확률이 이보다 높으면 콜이 길게 보아 이득)를 계산해 보여 줍니다. <b>대략적인 승률</b>은 남은 상대들의 패를 무작위로 가정한 어림값이며, 눌러서 숨길 수 있습니다.</li>
     <li>순위: 끝까지 남은 사람이 1등, 나머지는 늦게 탈락할수록 높습니다 (같은 판에 함께 떨어지면 그 판을 더 많은 칩으로 시작한 사람이 위). 판 수 제한이 끝나면 칩이 많은 순서입니다.</li>
   </ul>`,
 
@@ -618,7 +621,7 @@ export default {
       inHand: Array(n).fill(false), folded: Array(n).fill(false), allin: Array(n).fill(false),
       bet: Array(n).fill(0), put: Array(n).fill(0), start: Array(n).fill(chips), acted: Array(n).fill(-1),
       pfr: Array(n).fill(false), vpip: Array(n).fill(false), acts: Array(n).fill(""),
-      lastAct: null, last: null
+      lastAct: null, last: null, log: []
     };
     S.button = (randInt(S, n) + n - 1) % n;     // 첫 판에 한 칸 옮겨 가므로 무작위 자리의 바로 앞
     return S;
@@ -688,6 +691,7 @@ export default {
       text = S.allin[p] ? `{${p}} 님 올인! (${fmt(to)})` : `{${p}} 님 ${opening ? "벳" : "레이즈"} ${fmt(to)}`;
     }
     S.lastAct = { p, a: kind, amount: amt, to: S.bet[p] };
+    (S.log || (S.log = [])).push({ st: S.street, p, a: kind, to: S.bet[p] });
     ev.push({ type: "act", p, a: kind, amount: amt, to: S.bet[p], text });
     let left = 0, last = -1;
     for (let q = 0; q < S.n; q++) if (live(S, q)) { left++; last = q; }
@@ -771,7 +775,7 @@ export default {
       nextUp: nextLevelHand(S), button: S.button, sbSeat: S.sbSeat, bbSeat: S.bbSeat,
       street: S.street, board: S.board.slice(), seats, pots, potTotal: sum(S.put),
       curBet: S.curBet, minRaise: S.minRaise, turn: S.phase === "bet" ? S.turn : -1, runout: S.runout,
-      lastAct: S.lastAct, my, last: S.last, status
+      lastAct: S.lastAct, log: (S.log || []).slice(-24), my, last: S.last, status
     };
   },
 

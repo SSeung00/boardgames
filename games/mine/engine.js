@@ -24,7 +24,7 @@ for (let i = 0; i < NC; i++) for (let d = 0; d < 4; d++) {
 const START = idx(0, 0);
 const GOAL_POS = [[8, -2], [8, 0], [8, 2]];
 const GOAL_I = GOAL_POS.map(([x, y]) => idx(x, y));
-const GOAL_NAME = ["위쪽", "가운데", "아래쪽"];
+const GOAL_NAME = ["1번", "2번", "3번"];   // 화면에 따라 판이 가로(1번이 위) · 세로(1번이 왼쪽)로 보여서 위치 대신 번호로 부른다
 const FAR = 20;                                         // 닿을 길이 없을 때의 거리
 
 /* ---------- 카드 (71장) ---------- */
@@ -56,8 +56,11 @@ export const CARDS = (() => {
 })();
 const NCARDS = CARDS.length;                           // 71
 
-/* 역할 카드: [방해꾼, 광부] — 인원 + 1장, 한 장은 쓰지 않는다 */
-const ROLE_SET = { 3: [1, 3], 4: [1, 4], 5: [2, 4], 6: [2, 5], 7: [3, 5], 8: [3, 6], 9: [3, 7], 10: [4, 7] };
+/* 역할 카드: [방해꾼, 광부] — 인원보다 1~2장 많고, 남는 카드는 아무도 모른다.
+   원래 표(3명 1·3, 4명 1·4, 6명 2·5, 9명 3·7)는 AI 끼리 광부가 80~95% 이겼다 — 방해꾼 1명이 광부 3명에게 들키면
+   도구가 계속 고장 나 아무것도 못 하기 때문 (방해꾼을 더 숨게 만들어도 승률은 그대로였다).
+   그래서 3 · 4 · 6 · 9명은 방해꾼 카드를 한 장 늘려 기대 방해꾼 수를 올렸다 → 보통 AI 광부 승률 3~10명 모두 50~67% */
+const ROLE_SET = { 3: [2, 3], 4: [2, 4], 5: [2, 4], 6: [3, 5], 7: [3, 5], 8: [3, 6], 9: [4, 7], 10: [4, 7] };
 const handSize = n => (n <= 5 ? 6 : n <= 7 ? 5 : 4);
 const roleName = r => (r === "s" ? "방해꾼" : "광부");
 
@@ -122,7 +125,7 @@ function exits(G, R) {
 /* 목표마다 남은 거리 (카드 몇 장이 더 필요한지 어림): 목표 옆 빈칸에서 빈칸만 지나 굴 끝까지. 닿았으면 0.
    가장 짧은 길로 이어지는 굴 끝이 하나뿐이면(외길) 조금 더 먼 것으로 친다 — 막다른 길 하나로 막히기 쉬우니까 */
 const dq = new Int16Array(NC), dd = new Int16Array(NC);
-function dists(G, R) {
+function dists(G, R, raw) {   // raw: 어림 보정 없이 정수 칸 수 (화면 표시용)
   const ex = exits(G, R);
   const D = [FAR, FAR, FAR];
   for (let g = 0; g < 3; g++) {
@@ -150,7 +153,7 @@ function dists(G, R) {
       if (!v) continue;
       if (v < best) { best = v; width = 1; } else if (v === best) width++;
     }
-    D[g] = best < FAR ? best + .6 / width : FAR;
+    D[g] = best < FAR ? (raw ? best : best + .6 / width) : FAR;
   }
   return D;
 }
@@ -437,8 +440,11 @@ export default {
   ],
   rules: `<ul>
     <li>모두 몰래 <b>역할</b>을 받습니다. <b>광부</b>는 입구에서 금까지 굴을 잇고, <b>방해꾼</b>은 들키지 않게 막습니다.
-      역할 카드는 인원보다 한 장 많아 한 장은 아무도 모릅니다 (방해꾼·광부: 3명 1·3, 4명 1·4, 5명 2·4, 6명 2·5, 7명 3·5, 8명 3·6, 9명 3·7, 10명 4·7).</li>
-    <li>판 왼쪽에 <b>입구</b>, 8칸 오른쪽에 뒤집힌 <b>목표 3장</b>(금 1 · 석탄 2)이 2칸 간격으로 있습니다.</li>
+      역할 카드는 인원보다 1~2장 많고, 남는 카드는 아무도 모릅니다 — 그래서 방해꾼이 몇 명인지는 아무도 모릅니다.
+      (방해꾼·광부 카드: 3명 2·3, 4명 2·4, 5명 2·4, 6명 3·5, 7명 3·5, 8명 3·6, 9명 4·7, 10명 4·7.
+      우리 규칙: 3 · 4 · 6 · 9명은 원래보다 방해꾼 카드가 한 장 많습니다 — 광부가 너무 쉽게 이겨서.)</li>
+    <li><b>입구</b>에서 8칸 떨어진 곳에 뒤집힌 <b>목표 3장</b>(금 1 · 석탄 2, <b>1 · 2 · 3번</b>)이 2칸 간격으로 있습니다.
+      화면이 길쭉하면 판이 세로로(입구가 위, 목표가 아래) 보입니다 — 칸을 크게 보여 주려고 돌린 것일 뿐 규칙은 같습니다.</li>
     <li>내 차례에는 카드 <b>한 장을 내거나</b>, 한 장을 <b>엎어 버립니다</b>. 그다음 덱이 남았으면 한 장 뽑습니다. 손패: 3~5명 6장, 6~7명 5장, 8~10명 4장.</li>
   </ul>
   <h4>길 카드 (44장, 막다른 길 9장 포함)</h4>
@@ -534,7 +540,7 @@ export default {
       ev.push({ type: "discard", p, text: `{${p}} 님이 카드 한 장을 엎어 버렸습니다` });
     } else if (k === "path" || k === "rock") {
       const G0 = grid(S.board), D0 = dists(G0, reach(G0));
-      const kk = key(a.x, a.y);
+      const kk = key(a.x, a.y), gone = k === "rock" ? S.board[kk] : null;   // 낙석으로 치운 카드 (모두가 본 카드)
       if (k === "path") {
         const e = a.rot ? rot180(C.e) : C.e;
         S.board[kk] = { k: "p", id, e, c: C.c, rot: a.rot };
@@ -546,20 +552,20 @@ export default {
         ev.push({ type: "rock", p, x: a.x, y: a.y, text: `{${p}} 님이 낙석으로 굴 하나를 무너뜨렸습니다` });
       }
       const G1 = grid(S.board), D1 = dists(G1, reach(G1));
-      S.hist.push({ p, t: k, dead: k === "path" && !C.c, dg: D0.map((d, g) => d - D1[g]) });
+      S.hist.push({ p, t: k, x: a.x, y: a.y, dead: k === "path" && !C.c, gd: k === "rock" && !gone.c, dg: D0.map((d, g) => d - D1[g]) });
       S.last = { p, t: k, x: a.x, y: a.y };
       if (k === "path" && revealReached(S, ev)) { endRound(S, "m", p, ev); return ev; }
     } else if (k === "break") {
       S.broken[a.target].push(C.tool);
       S.discard.push(id);
-      S.hist.push({ p, t: "break", target: a.target });
+      S.hist.push({ p, t: "break", target: a.target, tool: C.tool });
       S.last = { p, t: "break", target: a.target, tool: C.tool };
       ev.push({ type: "break", p, target: a.target, tool: C.tool,
         text: `{${p}} 님이 {${a.target}} 님의 ${josa(TOOL_NAME[C.tool], "을", "를")} 망가뜨렸습니다 ${TOOL_ICON[C.tool]}` });
     } else if (k === "repair") {
       S.broken[a.target].splice(S.broken[a.target].indexOf(a.tool), 1);
       S.discard.push(id);
-      S.hist.push({ p, t: "fix", target: a.target });
+      S.hist.push({ p, t: "fix", target: a.target, tool: a.tool });
       S.last = { p, t: "fix", target: a.target, tool: a.tool };
       ev.push({ type: "repair", p, target: a.target, tool: a.tool,
         text: a.target === p ? `{${p}} 님이 자기 ${josa(TOOL_NAME[a.tool], "을", "를")} 고쳤습니다 ${TOOL_ICON[a.tool]}`
@@ -567,7 +573,7 @@ export default {
     } else if (k === "map") {
       S.peeks[p].push(a.goal);
       S.discard.push(id);
-      S.hist.push({ p, t: "map" });
+      S.hist.push({ p, t: "map", goal: a.goal });
       S.last = { p, t: "map", goal: a.goal };
       ev.push({ type: "map", p, goal: a.goal, gold: S.goals[a.goal].gold,
         text: `{${p}} 님이 지도로 ${GOAL_NAME[a.goal]} 목표를 몰래 보았습니다 🗺️` });
@@ -624,11 +630,14 @@ export default {
     const goals = S.goals.map((gl, g) => ({ x: gl.x, y: gl.y, rev: gl.rev,
       kind: gl.rev || open || known.includes(g) ? (gl.gold ? "gold" : "coal") : null, peek: !gl.rev && known.includes(g) }));
     const hand = me >= 0 ? S.hands[me].map(id => ({ id, ...CARDS[id] })) : [];
-    // 내 차례면 길 카드마다 놓을 수 있는 자리 [x, y, rot]
+    // 판 계산은 화면이 대신 한다: 굴 끝(입구와 이어진 열린 끝 너머의 빈칸) · 목표마다 굴 끝에서 남은 칸 수
+    const G = grid(S.board), R = reach(G), ex = exits(G, R);
+    const front = ex.map(i => [ix(i), iy(i)]);
+    const need = dists(G, R, true).map(d => (d >= FAR ? null : d));
+    // 길 카드마다 놓을 수 있는 자리 [x, y, rot] — 남의 차례에도 미리 볼 수 있게 늘 계산한다 (공개된 판 + 내 손패만 쓴다)
     let legal = null;
-    if (me === S.turn && S.phase === "play" && !S.broken[me].length) {
+    if (me >= 0 && S.phase === "play" && !S.broken[me].length) {
       legal = {};
-      const G = grid(S.board), R = reach(G), ex = exits(G, R);
       for (const c of hand) if (c.t === "path") {
         const list = [];
         for (const rot of [0, 180]) {
@@ -647,7 +656,17 @@ export default {
       role: me >= 0 ? S.roles[me] : null,
       roles: open ? S.roles.slice() : null,
       res: open ? S.res : null,
-      board, goals, hand, legal, last: S.last,
+      board, goals, hand, legal, last: S.last, front, need,
+      roleSet: ROLE_SET[S.n],
+      // 이번 라운드에 누가 무엇을 했는지 (모두 공개된 행동) — 이름표 배지 · 기록 판에 쓴다
+      log: S.hist.map(h => {
+        const o = { p: h.p, t: h.t };
+        if (h.t === "path") { o.x = h.x; o.y = h.y; o.dead = h.dead; }
+        else if (h.t === "rock") { o.x = h.x; o.y = h.y; o.gone = h.gd ? "dead" : "path"; }   // 무너뜨린 카드 종류
+        else if (h.t === "break" || h.t === "fix") { o.target = h.target; o.tool = h.tool; }
+        else if (h.t === "map") o.goal = h.goal;
+        return o;
+      }),
       bounds: { x0: Math.max(X0, bx0 - 1), x1: Math.min(X1, bx1 + 1), y0: Math.max(Y0, by0 - 1), y1: Math.min(Y1, by1 + 1) },
       status
     };

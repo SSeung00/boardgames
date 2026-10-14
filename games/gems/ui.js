@@ -1,21 +1,53 @@
 /* 보석 상인 화면
-   위(판): 상대 줄 · 귀인 · 카드 3줄(3단계가 맨 위, 줄마다 더미 + 4장) · 은행 보석 6가지
-   아래(dock): 안내 · 내 점수 · 보너스/보석 · 찜 카드 · (보석 고르는 중이면) 취소/가져오기, 아니면 방금 일어난 일.
-   카드를 누르면 아래에서 올라오는 창에서 「사기」 · 「찜하기」, 은행 보석을 누르면 골라 담고 「가져오기」. */
+   위(판): 상대 줄(점수 · 색별 보너스/보석 · 찜 · 방금 한 일) · 귀인(나와 상대가 몇 장 남았나) · 카드 3줄 · 은행 보석
+   아래(dock): 안내(보석 고르는 중이면 취소/가져오기) · 내 상태 한 줄(점수 · 색별 보너스/보석 · 황금 · 찜 카드)
+   계산은 화면이 한다 — 카드마다 「살 수 있음」 또는 색별로 모자란 개수와 「부족 N」, 보석을 고르는 동안에는
+   가져온 뒤를 미리 계산해 보여 준다. 카드 크기는 남은 높이를 재서 정한다 (스크롤 없이 한 화면). */
 import { COLORS, ALL, CNAME, payFor } from "./engine.js";
 
 const ROMAN = ["", "Ⅰ", "Ⅱ", "Ⅲ"];
 const tokSum = t => ALL.reduce((a, c) => a + (t[c] || 0), 0);
 const qualifies = (bon, N) => COLORS.every(c => (bon[c] || 0) >= N.req[c]);
+const nobleRem = (bon, N) => COLORS.reduce((a, c) => a + Math.max(0, N.req[c] - (bon[c] || 0)), 0);
+const addTok = (a, b) => { const o = {}; for (const c of ALL) o[c] = (a[c] || 0) + (b[c] || 0); return o; };
 
-/* 카드 한 장 (view 의 카드 객체 또는 {t, hidden}) */
-function cardHTML(C, extra = "") {
+/* 카드 한 장을 내 보너스 · 보석(tok)으로 따져 본다
+   short: 색마다 모자란 개수(황금 쓰기 전), free: 보너스로 다 덮인 색, miss: 황금까지 써도 모자란 개수 */
+function judge(bon, tok, C) {
+  const short = {}, free = {};
+  let tot = 0;
+  for (const c of COLORS) {
+    if (!C.cost[c]) continue;
+    const need = Math.max(0, C.cost[c] - (bon[c] || 0));
+    if (!need) { free[c] = 1; continue; }
+    const s = Math.max(0, need - (tok[c] || 0));
+    if (s) { short[c] = s; tot += s; }
+  }
+  const miss = Math.max(0, tot - (tok.y || 0));
+  return { short, free, miss, ok: miss === 0, gold: Math.min(tot, tok.y || 0) };
+}
+/* 이 색 보너스가 하나 늘면 새로 찾아올 귀인 */
+function nobleBy(nobles, bon, c) {
+  const b2 = { ...bon }; b2[c] = (b2[c] || 0) + 1;
+  return nobles.find(N => !qualifies(bon, N) && qualifies(b2, N)) || null;
+}
+
+/* 카드 한 장 (view 의 카드 객체 또는 {t, hidden})
+   info: { j: judge 결과, marks: 색별 부족 표시 여부, tag: 가운데 배지 HTML, flags: 위쪽 가운데 작은 표시 HTML } */
+function cardHTML(C, extra = "", info = null) {
   if (!C) return `<div class="gm-card gm-none ${extra}"></div>`;
   if (C.hidden) return `<div class="gm-card gm-back t${C.t} ${extra}"><b>${ROMAN[C.t]}</b><small>비공개</small></div>`;
-  const cost = COLORS.filter(c => C.cost[c] > 0).map(c => `<i class="gm-dot gm-${c}">${C.cost[c]}</i>`).join("");
+  const j = info && info.j;
+  const cost = COLORS.filter(c => C.cost[c] > 0).map(c => {
+    const s = j && info.marks && j.short[c], f = j && j.free[c];
+    return `<i class="gm-dot gm-${c}${f ? " free" : ""}">${C.cost[c]}${s ? `<sup>−${s}</sup>` : ""}</i>`;
+  }).join("");
   return `<div class="gm-card gm-${C.c} t${C.t}${C.blind ? " blind" : ""} ${extra}">` +
     `<span class="gm-pt">${C.pt || ""}</span><span class="gm-gem gm-${C.c}"><i></i></span>` +
-    `<span class="gm-art gm-${C.c}"></span><span class="gm-cost">${cost}</span>` +
+    `<span class="gm-art gm-${C.c}"></span>` +
+    (info && info.flags ? `<span class="gm-flags">${info.flags}</span>` : "") +
+    (info && info.tag ? info.tag : "") +
+    `<span class="gm-cost">${cost}</span>` +
     (C.blind ? '<span class="gm-blind">비공개</span>' : "") + `</div>`;
 }
 const gemHTML = (c, extra = "") => `<span class="gm-gem gm-${c} ${extra}"><i></i></span>`;
@@ -28,15 +60,14 @@ export function mount(root, ctx) {
   const wrap = el("div", "gm");
   wrap.innerHTML = `
     <div class="gm-board felt">
-      <div class="gm-seats" data-r="seats"></div>
+      <div class="gm-opps" data-r="seats"></div>
       <div class="gm-nobles" data-r="nobles"></div>
       <div class="gm-rows" data-r="rows"></div>
       <div class="gm-bank" data-r="bank"></div>
     </div>
     <div class="dock gm-dock">
-      <div class="hint" data-r="hint"></div>
+      <div class="gm-bar" data-r="bar"></div>
       <div class="gm-me" data-r="me"></div>
-      <div class="gm-foot" data-r="foot"></div>
     </div>`;
   root.appendChild(wrap);
   const R = k => wrap.querySelector(`[data-r="${k}"]`);
@@ -49,6 +80,53 @@ export function mount(root, ctx) {
 
   const nameOf = p => (M && M.players[p] ? M.players[p].name : "?");
   const myTurn = () => !!ctx.myAsk("turn");
+
+  /* ---------------- 크기: 화면 높이를 재서 한 번에 정한다 ----------------
+     판 높이 = 화면 − 아래 조작 영역. 상대 줄 · 귀인 · 은행은 기본 크기로 두고 남는 높이를 카드에 준다.
+     카드가 폭에 막혀 더 못 커지면 남는 높이를 상대 줄 · 귀인 · 은행 · 카드 세로 비율에 나눠 준다 (빈 띠가 생기지 않게). */
+  let fitKey = "";
+  function fit() {
+    if (!M) return;
+    const board = wrap.firstElementChild, dock = wrap.lastElementChild;
+    const W = board.clientWidth - 8, stageH = wrap.clientHeight;
+    if (W <= 0 || stageH <= 0) return;
+    const nOpp = M.v.players.length - 1;
+    const tall = stageH >= 700;
+    wrap.style.setProperty("--mys", (tall ? 28 : stageH >= 620 ? 26 : 24) + "px");
+    const boardH = stageH - dock.offsetHeight - 4;
+    const gap = W < 360 ? 4 : 5;
+    let vgap = gap;
+    const inner = boardH - 9 - 12;
+    let oh = 40, nh = 50, tks = 36;            // 상대 줄도 누르는 곳이라 40px 이상
+    const dw = Math.round(Math.max(26, Math.min(34, W * 0.085)));
+    const cwMax = Math.min((W - dw - 4 * gap) / 4, 110);
+    const rowsFor = ch => 3 * ch + 2 * gap;
+    const fixed = () => nOpp * oh + (nOpp - 1) * 3 + nh + tks + 8;
+    let avail = inner - fixed(), ch, cw = cwMax;
+    if (avail >= rowsFor(cwMax * 1.42)) {
+      // 카드는 폭에 막혔다 — 남는 높이를 나눠 준다
+      let spare = avail - rowsFor(cwMax * 1.42);
+      const dOh = Math.min(14, spare * 0.3 / nOpp); oh += dOh; spare -= dOh * nOpp;
+      const dNh = Math.min(26, spare * 0.4); nh += dNh; spare -= dNh;
+      const dTk = Math.min(10, spare * 0.3); tks += dTk; spare -= dTk;
+      avail = inner - fixed();
+      ch = Math.min((avail - 2 * gap) / 3, cwMax * 1.7);
+      vgap = Math.max(gap, Math.min(10, (avail - 3 * ch) / 4));   // 그래도 남으면 줄 사이를 조금 띄운다
+    } else {
+      ch = Math.max(40, (avail - 2 * gap) / 3);
+      if (ch < cw * 0.98) cw = ch / 0.98;          // 너무 납작하면 폭을 줄인다
+    }
+    const key = [W, stageH, nOpp, Math.floor(cw), Math.floor(ch), Math.floor(vgap)].join();
+    if (key === fitKey) return;
+    fitKey = key;
+    const set = (k, x) => wrap.style.setProperty(k, Math.floor(x) + "px");
+    set("--cw", cw); set("--chh", ch); set("--dw", dw); set("--rg", gap); set("--rgv", vgap);
+    set("--oh", oh); set("--nh", nh); set("--tks", tks);
+    wrap.style.setProperty("--fs", oh >= 48 ? "1.12" : oh >= 44 ? "1.08" : "1");
+  }
+  const ro = typeof ResizeObserver === "function" ? new ResizeObserver(() => fit()) : null;
+  if (ro) ro.observe(wrap);
+  else window.addEventListener("resize", fit);
 
   /* ---------------- 그리기 ---------------- */
   function update(m) {
@@ -63,7 +141,9 @@ export function mount(root, ctx) {
   }
   function draw() {
     if (!M) return;
-    drawSeats(); drawNobles(); drawRows(); drawBank(); drawDock();
+    const T = threats();
+    drawSeats(T); drawNobles(); drawRows(T); drawBank(); drawDock();
+    fit();
   }
 
   function effects(m) {
@@ -81,57 +161,105 @@ export function mount(root, ctx) {
     if (placed) pop = new Set(m.v.fresh);
   }
 
-  /* 상대들: 내 다음 사람부터 차례 순서대로 */
-  function drawSeats() {
+  /* 이번 판에 q 가 한 번 더 둘 수 있나 (마지막 바퀴면 시작 자리 앞까지만) */
+  function hasTurnLeft(q) {
+    const v = M.v, n = v.players.length;
+    if (v.phase !== "play") return false;
+    if (!v.final) return true;
+    const pos = x => (x - v.start + n) % n;
+    return pos(q) >= pos(v.turn);
+  }
+  /* 다음 차례에 승리 점수에 닿을 수 있는 상대 → {q: [카드 id…]} (펼쳐진 카드 · 공개된 찜 카드, 귀인 3점 포함) */
+  function threats() {
+    const v = M.v, out = {};
+    v.players.forEach((Q, q) => {
+      if (q === M.me || Q.pts >= v.goal || !hasTurnLeft(q)) return;
+      const ids = [];
+      const look = C => {
+        if (!C || C.hidden || !payFor(Q.tok, Q.bon, C)) return;
+        if (Q.pts + C.pt + (nobleBy(v.nobles, Q.bon, C.c) ? 3 : 0) >= v.goal) ids.push(C.id);
+      };
+      v.market.forEach(row => row.forEach(look));
+      Q.res.forEach(look);
+      if (ids.length) out[q] = ids;
+    });
+    return out;
+  }
+
+  /* 상대들: 내 다음 사람부터 차례 순서대로. 누르지 않아도 핵심이 다 보이게 */
+  function drawSeats(T) {
     const v = M.v, box = R("seats");
     box.innerHTML = "";
     const n = v.players.length;
+    box.className = "gm-opps n" + (n - 1);
     for (let k = 1; k < n; k++) {
       const q = (M.me + k) % n, P = v.players[q], pl = M.players[q] || { name: "?" };
-      const chip = el("button", "seatchip gm-seat" + (q === v.turn && v.phase === "play" ? " turn" : ""));
-      chip.innerHTML = `<span class="gm-av">${avatarHTML(pl.name, q, "sm")}` +
-        (pl.kind === "ai" ? '<span class="ai">AI</span>' : pl.kind === "away" ? '<span class="away">비움</span>' : "") + `</span>` +
-        `<span class="gm-st"><span class="nm">${esc(pl.name)}</span>` +
-        `<span class="gm-minis"><i class="gm-mi pt">${P.pts}</i><i class="gm-mi cd">${P.ncards}</i><i class="gm-mi tk">${tokSum(P.tok)}</i>` +
-        (P.res.length ? `<i class="gm-mi rs">${P.res.length}</i>` : "") + `</span></span>` +
-        (q === v.start ? '<i class="gm-first" title="첫 차례">선</i>' : "") + didHTML(q);
-      chip.setAttribute("aria-label", `${pl.name} ${P.pts}점, 카드 ${P.ncards}장, 보석 ${tokSum(P.tok)}개`);
-      chip.onclick = () => openPlayer(q);
-      box.appendChild(chip);
+      const turn = q === v.turn && v.phase === "play", thr = T[q];
+      const nt = tokSum(P.tok), left = v.goal - P.pts;
+      const row = el("button", "gm-opp" + (turn ? " turn" : "") + (thr ? " threat" : ""));
+      const cells = COLORS.map(c => `<span class="gm-oc"><i class="gm-bon gm-${c}${P.bon[c] ? "" : " zero"}">${P.bon[c]}</i>` +
+        `<i class="gm-tk gm-${c}${P.tok[c] ? "" : " zero"}">${P.tok[c]}</i></span>`).join("") +
+        `<span class="gm-oc"><i class="gm-bon gm-blank"></i><i class="gm-tk gm-y${P.tok.y ? "" : " zero"}">${P.tok.y}</i></span>`;
+      const l2 = thr ? `<span class="gm-warn">⚠ 다음 차례 ${v.goal}점 가능</span>`
+        : left <= 0 ? `<span class="gm-good">${v.goal}점 달성</span>`
+        : `${v.goal}까지 <b>${left}</b> · 보석 <b class="${nt >= 9 ? "hi" : ""}">${nt}</b>${P.nobles.length ? ` · 👑${P.nobles.length}` : ""}`;
+      row.innerHTML = `<span class="gm-oav">${avatarHTML(pl.name, q, "sm")}` +
+          (pl.kind === "ai" ? '<span class="gm-tag">AI</span>' : pl.kind === "away" ? '<span class="gm-tag away">비움</span>' : "") +
+          (q === v.start ? '<i class="gm-first" title="첫 차례">선</i>' : "") + `</span>` +
+        `<b class="gm-opt">${P.pts}</b>` +
+        `<span class="gm-onm"><span class="gm-l1"><span class="nm">${esc(pl.name)}</span>${didHTML(q)}</span><span class="gm-l2">${l2}</span></span>` +
+        `<span class="gm-ocols">${cells}</span>` +
+        `<span class="gm-ores${P.res.length ? "" : " zero"}"><small>찜</small><b>${P.res.length}</b></span>`;
+      row.setAttribute("aria-label", `${pl.name} ${P.pts}점, 카드 ${P.ncards}장, 보석 ${nt}개, 찜 ${P.res.length}장${thr ? ", 다음 차례에 승리 점수 가능" : ""}`);
+      row.onclick = () => openPlayer(q);
+      box.appendChild(row);
     }
   }
-  /* 방금 행동한 사람의 이름표에 붙는 작은 말풍선 */
+  /* 방금 행동한 사람 이름 옆에 붙는 작은 배지 */
   function didHTML(q) {
     const L = M.v.last;
-    if (!L || L.p !== q || q === M.me || M.v.phase !== "play") return "";
+    if (!L || L.p !== q || M.v.phase !== "play") return "";
     let t = "";
     if (L.type === "take") t = pips(L.take);
-    else if (L.type === "buy") t = `구매${L.cv && L.cv.pt ? ` +${L.cv.pt}` : ""}`;
-    else if (L.type === "reserve" || L.type === "reserveDeck") t = "찜";
+    else if (L.type === "buy") t = `${L.cv ? gemHTML(L.cv.c, "sm") : ""}구매${L.cv && L.cv.pt ? ` <b>+${L.cv.pt}</b>` : ""}`;
+    else if (L.type === "reserve") t = `${L.cv ? gemHTML(L.cv.c, "sm") : ""}찜${L.gold ? '<i class="gm-pip gm-y"></i>' : ""}`;
+    else if (L.type === "reserveDeck") t = `${ROMAN[L.tier]} 몰래 찜${L.gold ? '<i class="gm-pip gm-y"></i>' : ""}`;
     else if (L.type === "pass") t = "넘김";
+    if (L.discard) t += ` <span class="gm-dsc">−${tokSum(L.discard)}</span>`;
     if (L.noble !== undefined) t += " 👑";
     return t ? `<span class="gm-did">${t}</span>` : "";
   }
 
+  /* 귀인: 내가 몇 장 남았는지 + 상대마다 몇 장 남았는지 */
   function drawNobles() {
-    const v = M.v, box = R("nobles"), P = v.players[M.me];
+    const v = M.v, box = R("nobles"), P = v.players[M.me], n = v.players.length;
     box.innerHTML = "";
-    for (const N of v.nobles) {
-      const rem = COLORS.reduce((a, c) => a + Math.max(0, N.req[c] - P.bon[c]), 0);
+    const rems = v.nobles.map(N => nobleRem(P.bon, N));
+    const best = Math.min(...rems);
+    v.nobles.forEach((N, i) => {
+      const rem = rems[i];
       const reqs = COLORS.filter(c => N.req[c]).map(c => `<i class="gm-bon gm-${c}${P.bon[c] >= N.req[c] ? " ok" : ""}">${N.req[c]}</i>`).join("");
-      const b = el("button", "gm-noble" + (rem <= 2 ? " near" : ""), `<b>3</b><span class="gm-req">${reqs}</span>`);
-      b.setAttribute("aria-label", `귀인 ${N.name}`);
+      let opp = "";
+      for (let k = 1; k < n; k++) {
+        const q = (M.me + k) % n, r = nobleRem(v.players[q].bon, N);
+        opp += `<span class="gm-np${r <= 1 ? " hot" : ""}">${avatarHTML(nameOf(q), q, "gm-avx")}${r || "✓"}</span>`;
+      }
+      const mine = rem === 0 ? "조건 충족" : `${rem}장 남음`;
+      const b = el("button", "gm-noble" + (rem <= 2 || (rem === best && rem <= 4) ? " near" : "") + (rem === best ? " best" : ""),
+        `<span class="gm-nt"><b>3</b><span class="gm-req">${reqs}</span></span><span class="gm-nme">${mine}</span><span class="gm-nop">${opp}</span>`);
+      b.setAttribute("aria-label", `귀인 ${N.name}, 나는 ${mine}`);
       b.onclick = () => openNoble(N.id);
       box.appendChild(b);
-    }
-    const info = el("div", "gm-info");
-    info.innerHTML = (v.final ? '<span class="gm-final">마지막 바퀴</span>' : `<span>${v.round}바퀴째</span>`) +
-      `<span>목표 <b>${v.goal}</b>점</span>`;
-    box.appendChild(info);
+    });
   }
 
-  function drawRows() {
+  /* 카드 줄: 카드마다 살 수 있는지 · 색별로 모자란 개수를 표시. 보석을 고르는 중이면 가져온 뒤 기준 */
+  function drawRows(T) {
     const v = M.v, box = R("rows"), P = v.players[M.me], mine = myTurn();
+    const picking = mine && Object.keys(sel).length > 0;
+    const tokNow = P.tok, tokAfter = picking ? addTok(P.tok, sel) : P.tok;
+    const thrBy = {};
+    for (const q in T) for (const id of T[q]) (thrBy[id] = thrBy[id] || []).push(+q);
     box.innerHTML = "";
     for (let ti = 2; ti >= 0; ti--) {
       const t = ti + 1, row = el("div", "gm-row");
@@ -142,16 +270,39 @@ export function mount(root, ctx) {
       row.appendChild(deck);
       for (const C of v.market[ti]) {
         if (!C) { row.appendChild(el("div", "gm-card gm-none")); continue; }
-        const can = mine && payFor(P.tok, P.bon, C);
-        const cls = (can ? "can" : "") + (v.fresh.includes(C.id) ? " fresh" : "") + (pop.has(C.id) ? " pop" : "");
-        const b = el("button", "gm-cbtn", cardHTML(C, cls));
-        b.setAttribute("aria-label", `${t}단계 ${CNAME[C.c]} 카드 ${C.pt}점`);
+        const info = cardInfo(C, P, tokNow, tokAfter, picking, thrBy[C.id]);
+        const cls = info.cls + (v.fresh.includes(C.id) ? " fresh" : "") + (pop.has(C.id) ? " pop" : "") + (mine || v.phase !== "play" ? "" : " idle");
+        const b = el("button", "gm-cbtn", cardHTML(C, cls, info));
+        b.setAttribute("aria-label", `${t}단계 ${CNAME[C.c]} 카드 ${C.pt}점, ${info.say}`);
         b.setAttribute("data-id", C.id);
         b.onclick = () => openCard(C.id);
         row.appendChild(b);
       }
       box.appendChild(row);
     }
+  }
+  /* 카드 한 장의 표시 정보 (배지 · 위쪽 표시 · 클래스 · 읽어 줄 말) */
+  function cardInfo(C, P, tokNow, tokAfter, picking, thr) {
+    const v = M.v;
+    const now = judge(P.bon, tokNow, C);
+    const j = picking ? judge(P.bon, tokAfter, C) : now;
+    const nob = nobleBy(v.nobles, P.bon, C.c);
+    const win = v.phase === "play" && P.pts < v.goal && P.pts + C.pt + (nob ? 3 : 0) >= v.goal;
+    let tag, cls, say;
+    if (v.phase !== "play") return { j, tag: "", flags: "", cls: "", say: "", marks: false };
+    if (now.ok) {
+      tag = `<span class="gm-tag2 ok">${win ? `사면 ${v.goal}점!` : "살 수 있음"}</span>`;
+      cls = "can" + (win ? " win" : ""); say = "살 수 있음";
+    } else if (picking && j.ok) {
+      tag = `<span class="gm-tag2 will">가져오면 ✓</span>`; cls = "will"; say = "고른 보석을 가져오면 살 수 있음";
+    } else {
+      tag = `<span class="gm-tag2 no">부족 ${j.miss}</span>`; cls = "cant"; say = `보석 ${j.miss}개 부족`;
+    }
+    let flags = "";
+    if (nob) flags += `<i class="gm-fl nob" title="사면 귀인">👑</i>`;
+    if (thr) for (const q of thr) flags += `<i class="gm-fl thr" title="${esc(nameOf(q))} 님이 사면 승리 점수">⚠${esc([...nameOf(q)][0] || "?")}</i>`;
+    // 색별로 모자란 개수는 거의 살 수 있는 카드(3개 이하 부족)에만 — 먼 카드까지 다 표시하면 오히려 읽기 어렵다
+    return { j, tag, flags, cls: cls + (!j.ok && j.miss > 3 ? " far" : ""), say, marks: !j.ok && j.miss <= 3 };
   }
 
   function drawBank() {
@@ -170,93 +321,97 @@ export function mount(root, ctx) {
 
   function drawDock() {
     const v = M.v, me = M.me, P = v.players[me], ask = ctx.myAsk();
-    // 안내
-    let h;
-    if (v.phase === "over") h = "게임 끝";
-    else if (ask && ask.kind === "discard") h = `<b>보석이 10개를 넘었습니다</b> — 돌려놓을 보석을 고르세요`;
-    else if (ask && ask.kind === "noble") h = `<b>귀인 여럿이 찾아왔습니다</b> — 한 명을 고르세요`;
+    const bar = R("bar");
+    bar.innerHTML = "";
+    const picking = ask && ask.kind === "turn" && Object.keys(sel).length;
+    const hint = el("div", "hint gm-hint");
+    if (v.phase === "over") hint.innerHTML = "게임 끝";
+    else if (ask && ask.kind === "discard") hint.innerHTML = `<b>보석이 10개를 넘었습니다</b> — 돌려놓을 보석을 고르세요`;
+    else if (ask && ask.kind === "noble") hint.innerHTML = `<b>귀인 여럿이 찾아왔습니다</b> — 한 명을 고르세요`;
     else if (ask) {
-      const ck = selCheck();
-      if (!Object.keys(sel).length) h = v.final ? "<b>마지막 차례!</b> 점수를 최대한 올리세요" : "<b>내 차례</b> · 보석을 고르거나 카드를 누르세요";
-      else {
-        const after = tokSum(P.tok) + tokSum(sel);
-        h = ck.msg + (after > 10 ? ` · 받으면 ${after}개 → <b>${after - 10}개 반납</b>` : "");
+      if (!picking) {
+        const nb = buyable(P, P.tok);
+        hint.innerHTML = (v.final ? "<b>마지막 차례!</b> " : "<b>내 차례</b> · ") +
+          (nb ? `지금 살 수 있는 카드 <b>${nb}장</b>` : "보석을 고르거나 카드를 누르세요");
+      } else {
+        const ck = selCheck(), after = tokSum(P.tok) + tokSum(sel);
+        const gain = buyable(P, addTok(P.tok, sel)) - buyable(P, P.tok);
+        hint.innerHTML = ck.msg + (gain > 0 ? ` · 가져오면 <b class="gm-gw">${gain}장</b> 더 살 수 있음` : "") +
+          (after > 10 ? ` · <span class="gm-badt">${after - 10}개 반납</span>` : "");
       }
     } else {
       const who = M.pending && M.pending[0] ? M.pending[0].p : v.turn;
       const doing = v.sub === "discard" ? " — 보석 돌려놓는 중" : v.sub === "noble" ? " — 귀인 고르는 중" : "";
-      h = `<b>${esc(nameOf(who))}</b> 님 차례${doing}` + (v.final ? " · 마지막 바퀴" : "");
+      hint.innerHTML = `<b>${esc(nameOf(who))}</b> 님 차례${doing}` + (v.final ? ' · <span class="gm-final">마지막 바퀴</span>' : ` · ${v.round}바퀴째`);
     }
-    R("hint").innerHTML = h;
-
-    // 내 상태: 점수 · 보너스/보석 · 찜
-    const box = R("me");
-    box.innerHTML = "";
-    const turnNow = v.phase === "play" && v.turn === me;
-    const nt = tokSum(P.tok);
-    const score = el("button", "gm-score" + (turnNow ? " turn" : ""),
-      `<b>${P.pts}</b><small>/${v.goal}점</small><i class="${nt > 10 ? "over" : ""}">보석${nt}</i>`);
-    score.setAttribute("aria-label", `내 점수 ${P.pts}점, 보석 ${nt}개 — 눌러서 내 정보 보기`);
-    score.onclick = () => openPlayer(me);
-    box.appendChild(score);
-    const cols = el("div", "gm-cols");
-    for (const c of ALL) {
-      const col = el("div", "gm-col" + (pulseMe[c] ? " pulse" : ""));
-      col.innerHTML = (c === "y" ? `<i class="gm-bon gm-none">만능</i>` : `<i class="gm-bon gm-${c}${P.bon[c] ? "" : " zero"}">${P.bon[c]}</i>`) +
-        chipHTML(c, P.tok[c], "sm" + (P.tok[c] ? "" : " zero"));
-      cols.appendChild(col);
-    }
-    box.appendChild(cols);
-    const res = el("div", "gm-myres");
-    for (let i = 0; i < 3; i++) {
-      const C = P.res[i];
-      if (!C) { res.appendChild(el("span", "gm-rslot")); continue; }
-      const can = ask && ask.kind === "turn" && payFor(P.tok, P.bon, C);
-      const b = el("button", "gm-cbtn", cardHTML(C, "mini" + (can ? " can" : "")));
-      b.setAttribute("aria-label", `찜한 ${C.t}단계 ${CNAME[C.c]} 카드`);
-      b.setAttribute("data-id", C.id);
-      b.onclick = () => openCard(C.id);
-      res.appendChild(b);
-    }
-    box.appendChild(res);
-
-    // 아래 줄: 고르는 중이면 버튼, 아니면 방금 일어난 일
-    const foot = R("foot");
-    foot.innerHTML = "";
-    if (ask && ask.kind === "turn" && Object.keys(sel).length) {
+    bar.appendChild(hint);
+    if (picking) {
       const ck = selCheck();
-      foot.className = "gm-foot actions";
-      const cancel = el("button", "btn", "취소");
+      const cancel = el("button", "btn small", "취소");
       cancel.onclick = () => { sel = {}; ctx.sound.tick(); draw(); };
-      const ok = el("button", "btn primary", `가져오기 <span class="gm-pips">${pips(sel)}</span>`);
+      const ok = el("button", "btn small primary", `가져오기 <span class="gm-pips">${pips(sel)}</span>`);
       ok.disabled = !ck.ok;
       ok.onclick = () => {
         if (!selCheck().ok) return;
         const a = { take: { ...sel } };
         if (ctx.send(a)) { sel = {}; draw(); }
       };
-      foot.append(cancel, ok);
-    } else {
-      foot.className = "gm-foot";
-      foot.innerHTML = lastHTML();
+      bar.append(cancel, ok);
     }
-  }
+    bar.className = "gm-bar" + (picking ? " picking" : "");
 
-  /* 방금 일어난 일 한 줄 */
-  function lastHTML() {
-    const L = M.v.last;
-    if (!L) return `<div class="gm-last dim">${M.v.phase === "play" ? `${esc(nameOf(M.v.start))} 님부터 시작합니다` : ""}</div>`;
-    const who = L.p === M.me ? "나" : esc(nameOf(L.p));
-    let d = "";
-    const cardTxt = cv => cv ? `${cv.t}단계 ${gemHTML(cv.c, "sm")}${CNAME[cv.c]}${cv.pt ? ` <b>${cv.pt}점</b>` : ""}` : "";
-    if (L.type === "take") d = `보석 가져옴 ${pips(L.take)}`;
-    else if (L.type === "buy") d = `${L.from === "res" ? "찜한 " : ""}${cardTxt(L.cv)} 카드 구매`;
-    else if (L.type === "reserve") d = `${cardTxt(L.cv)} 카드 찜${L.gold ? ` + ${chipHTML("y", undefined, "xs")}` : ""}`;
-    else if (L.type === "reserveDeck") d = `${L.tier}단계 더미에서 ${L.cv ? cardTxt(L.cv) + " 카드 " : ""}몰래 찜${L.gold ? ` + ${chipHTML("y", undefined, "xs")}` : ""}`;
-    else if (L.type === "pass") d = "할 수 있는 게 없어 넘김";
-    if (L.discard) d += ` · 돌려놓음 ${pips(L.discard)}`;
-    if (L.noble !== undefined) d += " · 👑 귀인 방문";
-    return `<div class="gm-last">${avatarHTML(L.p === M.me ? nameOf(M.me) : nameOf(L.p), L.p, "sm")}<span><b>${who}</b> ${d}</span></div>`;
+    // 내 상태 한 줄: 점수/목표 · 색별 보너스(네모)와 보석(동그라미) · 황금 · 찜 카드
+    const box = R("me");
+    box.innerHTML = "";
+    const turnNow = v.phase === "play" && v.turn === me;
+    const nt = tokSum(P.tok), left = v.goal - P.pts;
+    const score = el("button", "gm-score" + (turnNow ? " turn" : ""),
+      `<span><b>${P.pts}</b><small>/${v.goal}</small></span><i>${left > 0 ? `${left}점 남음` : "달성!"}</i><i class="${nt > 10 ? "over" : nt >= 9 ? "hi" : ""}">보석 ${nt}/10</i>`);
+    score.setAttribute("aria-label", `내 점수 ${P.pts}점, 목표까지 ${Math.max(0, left)}점, 보석 ${nt}개 — 눌러서 내 정보 보기`);
+    score.onclick = () => openPlayer(me);
+    box.appendChild(score);
+    const myDid = didHTML(me);
+    if (myDid) box.appendChild(el("div", "gm-medid", `<small>나</small>${myDid}`));
+    const cols = el("div", "gm-cols");
+    const after = ask && ask.kind === "turn" && Object.keys(sel).length ? sel : {};
+    for (const c of ALL) {
+      const col = el("div", "gm-col" + (pulseMe[c] ? " pulse" : ""));
+      col.innerHTML = (c === "y" ? `<i class="gm-bon gm-none">만능</i>` : `<i class="gm-bon gm-${c}${P.bon[c] ? "" : " zero"}">${P.bon[c]}</i>`) +
+        chipHTML(c, P.tok[c] + (after[c] || 0), "sm" + (P.tok[c] || after[c] ? "" : " zero") + (after[c] ? " plus" : ""));
+      cols.appendChild(col);
+    }
+    box.appendChild(cols);
+    const res = el("div", "gm-myres");
+    const tokA = addTok(P.tok, after);
+    for (let i = 0; i < 3; i++) {
+      const C = P.res[i];
+      if (!C) { res.appendChild(el("span", "gm-rslot")); continue; }
+      const j = judge(P.bon, tokA, C), now = judge(P.bon, P.tok, C);
+      const tag = now.ok ? '<span class="gm-mtag ok">✓</span>' : j.ok ? '<span class="gm-mtag will">✓</span>' : `<span class="gm-mtag no">−${j.miss}</span>`;
+      const b = el("button", "gm-cbtn gm-rbtn", cardHTML(C, "mini" + (now.ok ? " can" : j.ok ? " will" : "") + (ask && ask.kind === "turn" ? "" : " idle")) + tag);
+      b.setAttribute("aria-label", `찜한 ${C.t}단계 ${CNAME[C.c]} 카드, ${now.ok ? "살 수 있음" : `보석 ${j.miss}개 부족`}`);
+      b.setAttribute("data-id", C.id);
+      b.onclick = () => openCard(C.id);
+      res.appendChild(b);
+    }
+    box.appendChild(res);
+  }
+  /* 버릴 보석 d 를 빼고 남은 보석으로, 카드마다 모자란 개수의 합 (가까운 카드일수록 무겁게) */
+  function lackScore(P, d) {
+    const tok = {};
+    for (const c of ALL) tok[c] = P.tok[c] - (d[c] || 0);
+    let v = 0;
+    const add = C => { if (C && !C.hidden) { const m = judge(P.bon, tok, C).miss; v += Math.min(m, 6) * (m <= 2 ? 2 : 1); } };
+    M.v.market.forEach(row => row.forEach(add));
+    P.res.forEach(C => { add(C); add(C); });     // 내 찜 카드는 두 배로
+    return v;
+  }
+  /* tok 으로 살 수 있는 카드 수 (펼쳐진 카드 + 내 찜) */
+  function buyable(P, tok) {
+    let k = 0;
+    for (const row of M.v.market) for (const C of row) if (C && judge(P.bon, tok, C).ok) k++;
+    for (const C of P.res) if (!C.hidden && judge(P.bon, tok, C).ok) k++;
+    return k;
   }
 
   /* ---------------- 은행 보석 고르기 ---------------- */
@@ -340,15 +495,18 @@ export function mount(root, ctx) {
       const ask = ctx.myAsk(), turn = !!(ask && ask.kind === "turn");
       const pay = payFor(P.tok, P.bon, C);
       // 색마다 비용 계산
-      let rows = "", shortTot = 0;
+      let rows = "", shortTot = 0, goldLeft = P.tok.y;
       const shortBy = {};
       for (const c of COLORS) {
         if (!C.cost[c]) continue;
         const need = Math.max(0, C.cost[c] - P.bon[c]), use = Math.min(need, P.tok[c]), short = need - use;
+        const g = Math.min(short, goldLeft), lack = short - g;     // 황금은 있는 만큼만, 그래도 모자라면 빨간 숫자
+        goldLeft -= g;
         shortTot += short; if (short) shortBy[c] = short;
         rows += `<div class="gm-payrow"><i class="gm-dot gm-${c}">${C.cost[c]}</i>` +
           `<span class="gm-calc">${P.bon[c] ? `보너스 −${Math.min(P.bon[c], C.cost[c])}` : "보너스 없음"} → <b>${need}</b></span>` +
-          `<span class="gm-with">${use ? `${chipHTML(c, undefined, "xs")}×${use}` : ""}${short ? ` ${chipHTML("y", undefined, "xs")}×${short}` : ""}${!need ? "공짜" : ""}</span></div>`;
+          `<span class="gm-with">${use ? `${chipHTML(c, undefined, "xs")}×${use}` : ""}${g ? ` ${chipHTML("y", undefined, "xs")}×${g}` : ""}` +
+          `${lack ? ` <span class="gm-lack">부족 ${lack}</span>` : ""}${!need ? "공짜" : ""}</span></div>`;
       }
       let sum;
       if (pay) {
@@ -443,21 +601,29 @@ export function mount(root, ctx) {
     sub = token;
     ctx.modal((box, close) => {
       token.close = close;
+      box.classList.add("gm-dmodal");
       const P = M.v.players[M.me], total = tokSum(P.tok), need = total - 10;
       const d = {};
       for (const c of ALL) d[c] = 0;
-      ctx.head(box, "보석 10개 초과", `보석 ${need}개를 돌려놓으세요`, `지금 ${total}개 — 10개까지만 가질 수 있습니다. 돌려놓은 보석은 은행으로 갑니다.`);
+      ctx.head(box, "보석 10개 초과", `보석 ${need}개를 돌려놓으세요`, `지금 ${total}개 — 10개까지만 가질 수 있습니다.`);
       const list = el("div", "gm-disc");
       box.appendChild(list);
       const left = el("div", "gm-dleft");
       box.appendChild(left);
       const btnRow = ctx.buttonRow(box, [
-        { label: "많은 색부터", on: () => {
+        { label: "추천대로", on: () => {
+          // 펼쳐진 카드 · 내 찜 카드에 덜 필요한 보석부터 (모자란 개수 합이 가장 적게 늘도록, 같으면 많은 색부터 · 황금은 마지막)
           for (const c of ALL) d[c] = 0;
           for (let i = 0; i < need; i++) {
-            let best = null;
-            for (const c of COLORS) if (P.tok[c] - d[c] > 0 && (!best || P.tok[c] - d[c] > P.tok[best] - d[best])) best = c;
-            d[best || "y"]++;
+            let best = null, bv = Infinity;
+            for (const c of ALL) {
+              if (P.tok[c] - d[c] <= 0) continue;
+              d[c]++;
+              const v = lackScore(P, d) + (c === "y" ? 0.5 : 0) - (P.tok[c] - d[c]) * 0.01;
+              d[c]--;
+              if (v < bv) { bv = v; best = c; }
+            }
+            d[best]++;
           }
           ctx.sound.tick(); draw2();
         } },
@@ -483,7 +649,11 @@ export function mount(root, ctx) {
           list.appendChild(r);
         }
         const s = tokSum(d);
-        left.innerHTML = s === need ? `<b>${need}개</b> 다 골랐습니다 ${pips(d)}` : `<b>${need - s}개</b> 더 고르세요 ${pips(d)}`;
+        const keep = {};
+        for (const c of ALL) keep[c] = P.tok[c] - d[c];
+        const nb = buyable(P, keep), nb0 = buyable(P, P.tok);
+        left.innerHTML = (s === need ? `<b>${need}개</b> 다 골랐습니다 ${pips(d)}` : `<b>${need - s}개</b> 더 고르세요 ${pips(d)}`) +
+          `<br><small>이대로면 살 수 있는 카드 <b>${nb}장</b>${nb < nb0 ? ` <span class="gm-badt">(지금보다 ${nb0 - nb}장 줄어듦)</span>` : ""}</small>`;
         okBtn.disabled = s !== need;
       }
       draw2();
@@ -510,6 +680,10 @@ export function mount(root, ctx) {
 
   return {
     update,
-    destroy() { closeSheet(); if (sub) { const s = sub; sub = null; s.close(); } root.innerHTML = ""; }
+    ticker: false,     // 방금 일어난 일은 이름표 옆 배지로 보여 준다 — 위쪽 한 줄 기록은 숨기고 그 높이를 판에 쓴다
+    destroy() {
+      if (ro) ro.disconnect(); else window.removeEventListener("resize", fit);
+      closeSheet(); if (sub) { const s = sub; sub = null; s.close(); } root.innerHTML = "";
+    }
   };
 }

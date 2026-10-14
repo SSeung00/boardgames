@@ -3,7 +3,7 @@ import { GAMES, gameById } from "../games/registry.js";
 import { Room, cleanName } from "./host.js";
 import { net, token, hostRoom, joinRoom, Rejoin, sendConn, sendToHost, leaveNet, shareLink, Awake } from "./net.js";
 import {
-  $, el, esc, LS, prefs, savePrefs, sound, buzz, toast, modal, closeAllModals, head, buttonRow, choose, avatarHTML
+  $, el, esc, LS, prefs, savePrefs, sound, buzz, toast, modal, closeAllModals, head, buttonRow, choose, avatarHTML, avatarColor
 } from "./ui.js";
 
 let room = null;              // 방장 · 혼자 하기일 때만
@@ -212,6 +212,7 @@ function unmountGame() {
   $("stage").innerHTML = "";
   logLines.length = 0;
   $("ticker").textContent = "";
+  $("ticker").hidden = false;
   clearInterval(timerT);
   $("timer").style.width = "0";
 }
@@ -241,10 +242,12 @@ async function onState(msg) {
           toHost({ t: "act", id: a.id, a: action });
           return true;
         },
-        myAsk, sound, buzz, toast, modal, choose, el, esc, avatarHTML, head, buttonRow,
+        myAsk, sound, buzz, toast, modal, choose, el, esc, avatarHTML, avatarColor, head, buttonRow,
         nameText: t => nameText(t, game && game.last ? game.last.players : [])
       };
       game.ui = mod.mount($("stage"), ctx);
+      // 게임이 직접 진행 기록을 보여 주면 위쪽 한 줄 기록은 숨겨 화면을 넓힌다
+      $("ticker").hidden = game.ui.ticker === false;
     });
   }
   const g = game;

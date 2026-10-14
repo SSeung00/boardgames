@@ -5,9 +5,10 @@ import poker from "./poker/engine.js";
 import gems from "./gems/engine.js";
 import mine from "./mine/engine.js";
 import gostop from "./gostop/engine.js";
+import dalmuti from "./dalmuti/engine.js";
 
 const base = new URL(".", import.meta.url).href;
 const entry = engine => ({ id: engine.id, engine, ui: `${base}${engine.id}/ui.js`, css: `${base}${engine.id}/style.css` });
 
-export const GAMES = [oldmaid, onecard, poker, gostop, gems, mine].map(entry);
+export const GAMES = [dalmuti, oldmaid, onecard, poker, gostop, gems, mine].map(entry);
 export const gameById = id => GAMES.find(g => g.id === id);

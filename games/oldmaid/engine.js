@@ -49,11 +49,11 @@ export default {
   </ul>`,
 
   setup({ n, seed }) {
-    const S = { n, rs: seed >>> 0, hands: [], out: [], phase: "play", turn: 0, loser: null, discards: 0, last: null, round: 0 };
+    const S = { n, rs: seed >>> 0, hands: [], out: [], phase: "play", turn: 0, loser: null, discards: 0, gone: Array(14).fill(0), last: null, round: 0 };
     const deck = shuffle(S, [...deck52(), "JC"]);
     for (let p = 0; p < n; p++) S.hands.push([]);
     deck.forEach((c, i) => S.hands[i % n].push(c));
-    for (const h of S.hands) S.discards += dropPairs(h).length * 2;
+    for (const h of S.hands) for (const r of dropPairs(h)) { S.discards += 2; S.gone[r] += 2; }
     S.turn = Math.floor(S.rs % n);
     const ev = [];
     settle(S, ev);
@@ -81,6 +81,7 @@ export default {
     hand.push(card);
     const ranks = dropPairs(hand);
     S.discards += ranks.length * 2;
+    for (const r of ranks) S.gone[r] += 2;
     S.last = { from: v, to: p, paired: ranks.length ? ranks[0] : null };
     const ev = [{ type: "draw", from: v, to: p, i: a.i, card, paired: ranks.length ? ranks[0] : null, joker: isJoker(card),
       text: `{${p}} 님이 {${v}} 님의 카드를 뽑았습니다` + (ranks.length ? ` — 짝! (${rankLabel(ranks[0])})` : "") }];
@@ -110,7 +111,7 @@ export default {
     const mine = p >= 0 ? S.hands[p].slice().sort((a, b) => (isJoker(a) ? 99 : rankOf(a)) - (isJoker(b) ? 99 : rankOf(b)) || a.localeCompare(b)) : [];
     return {
       phase: S.phase, turn: S.turn, victim, sizes: S.hands.map(h => h.length), out: S.out.slice(), loser: S.loser,
-      discards: S.discards, last: S.last, hand: mine,
+      discards: S.discards, gone: S.gone.slice(), last: S.last, hand: mine,   // gone[숫자]: 짝으로 버려진 장 수 (모두가 본다)
       status: S.phase === "over" ? "게임 끝" : (p === S.turn ? "내 차례 — 한 장 뽑으세요" : "")
     };
   },
@@ -132,6 +133,7 @@ export default {
   check(S) {
     const total = S.hands.reduce((a, h) => a + h.length, 0) + S.discards;
     if (total !== 53) return `카드 수가 맞지 않음 ${total}`;
+    if (S.gone.reduce((a, b) => a + b, 0) !== S.discards) return "버린 짝 기록이 맞지 않음";
     for (const h of S.hands) {
       const seen = new Set();
       for (const c of h) if (!isJoker(c)) { const r = rankOf(c); if (seen.has(r)) return "손에 짝이 남아 있음"; seen.add(r); }
