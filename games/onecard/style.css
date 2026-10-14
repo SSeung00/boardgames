@@ -1,0 +1,120 @@
+.oc{height:100%; display:flex; flex-direction:column}
+
+/* 자리 — 이름 위 · 장 수 아래로 쌓아 폭을 줄인다 */
+.oc-seats{gap:7px 5px; padding:8px 6px 2px; align-items:center}
+.oc-seat{position:relative; padding:3px 9px 3px 3px; gap:5px}
+.oc-st{display:flex; flex-direction:column; line-height:1.18; min-width:0}
+.oc-seat .nm{font-size:12.5px; max-width:62px}
+.oc-seat .sub{font-size:11px; display:flex; align-items:center; gap:3px}
+.oc-seat .ai, .oc-seat .away{font-size:9px; padding:0 3px; line-height:1.35}
+.oc-nx{position:absolute; top:-7px; right:6px; font-style:normal; font-size:9px; font-weight:800; line-height:1.4; padding:0 4px; border-radius:5px;
+  background:var(--gold); color:#1d1406}
+.oc-seat.oc-one{border-color:rgba(217,83,79,.8)}
+.oc-seat.oc-one .sub{color:#ff9b8f; font-weight:700}
+.oc-seat.oc-calling{animation:ocPulse .8s ease-in-out infinite}
+.oc-dirchip{width:30px; height:30px; border-radius:50%; display:grid; place-items:center; font-size:19px; font-weight:800; color:var(--gold2);
+  background:rgba(0,0,0,.32); border:1px solid rgba(230,195,106,.45)}
+
+/* 판 */
+.oc-table{flex:1; min-height:0; margin:4px 8px; border-radius:22px; position:relative; overflow:hidden;
+  box-shadow:inset 0 0 0 2px rgba(230,195,106,.25), inset 0 10px 40px rgba(0,0,0,.4);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:10px 8px}
+.oc-ring{position:absolute; left:50%; top:50%; width:min(78vw,330px); aspect-ratio:1; transform:translate(-50%,-56%); pointer-events:none;
+  color:rgba(255,255,255,.07); transition:transform .5s cubic-bezier(.3,.8,.3,1)}
+.oc-ring.rev{transform:translate(-50%,-56%) scaleX(-1)}
+.oc-ring svg{width:100%; height:100%; display:block; animation:ocSpin 40s linear infinite}
+@keyframes ocSpin{to{transform:rotate(360deg)}}
+
+.oc-mid{position:relative; z-index:1; display:flex; align-items:center; justify-content:center; gap:28px}
+.oc-deck{position:relative; padding:0; border:0; background:none; color:var(--ink); display:flex; flex-direction:column; align-items:center; gap:6px; min-width:72px}
+.oc-deck:disabled{cursor:default}
+.oc-stack{position:relative; display:block}
+.oc-deck .pc{box-shadow:2px 2px 0 #e9d7a8, 4px 4px 0 #5c2029, 0 8px 16px rgba(0,0,0,.5); transition:transform .15s}
+.oc-deck.can .pc{box-shadow:0 0 0 3px var(--gold2), 3px 3px 0 #5c2029, 0 8px 18px rgba(0,0,0,.5); animation:ocBob 1.4s ease-in-out infinite}
+.oc-deck.atk .pc{box-shadow:0 0 0 3px var(--red), 3px 3px 0 #5c2029, 0 0 22px rgba(217,83,79,.6)}
+.oc-deck.can:active .pc{transform:translateY(3px)}
+.oc-cnt{position:absolute; top:-8px; right:-10px; min-width:24px; height:24px; padding:0 6px; border-radius:12px; display:grid; place-items:center;
+  background:rgba(0,0,0,.75); border:1px solid var(--line2); font-size:12px; font-weight:800}
+.oc-dlabel{font-size:12px; color:rgba(255,255,255,.7); white-space:nowrap}
+.oc-deck.can .oc-dlabel{color:var(--gold2); font-weight:700}
+.oc-deck.atk .oc-dlabel{color:#ff9b8f}
+.oc-empty{width:64px; height:92px; border-radius:6px; border:2px dashed rgba(255,255,255,.25); display:grid; place-items:center; font-size:12px; color:rgba(255,255,255,.5)}
+
+.oc-pile{position:relative; width:84px; height:120px}
+.oc-under, .oc-top{position:absolute; inset:0}
+.oc-under{transform:rotate(var(--r,0deg))}
+.oc-under .pc, .oc-top .pc{--cw:84px; --ch:120px}
+.oc-under .pc{filter:brightness(.78)}
+.oc-pile .pc .pc-corner{font-size:19px}
+.oc-pile .pc .pc-corner i{font-size:14px}
+.oc-pile .pc .pc-mid{font-size:46px}
+.oc-pile .pc.joker .pc-corner{font-size:9px}
+.oc-pile .pc.joker .pc-mid{font-size:42px}
+.oc-pile .pc.joker .pc-sub{font-size:12px; bottom:6px}
+.oc-top .pc{box-shadow:0 6px 18px rgba(0,0,0,.55)}
+.oc-top.in .pc{animation:ocIn .35s cubic-bezier(.2,.9,.3,1.2)}
+.oc-top.hot .pc{box-shadow:0 0 0 3px var(--red), 0 0 26px rgba(217,83,79,.65)}
+.oc-pcnt{position:absolute; left:0; right:0; bottom:-19px; text-align:center; font-size:11px; color:rgba(255,255,255,.55)}
+@keyframes ocIn{from{transform:translateY(-60px) scale(1.15) rotate(-8deg); opacity:0}}
+@keyframes ocBob{50%{transform:translateY(-4px)}}
+
+/* 공격 · 무늬 표시 */
+.oc-badges{position:relative; z-index:1; display:flex; gap:8px; flex-wrap:wrap; justify-content:center; min-height:30px; margin-top:8px}
+.oc-atk{padding:3px 14px; border-radius:999px; background:linear-gradient(180deg,#e85a52,#a3302c); color:#fff; font-weight:800; font-size:16px;
+  box-shadow:0 0 18px rgba(217,83,79,.6); animation:ocPulse 1s ease-in-out infinite}
+.oc-need{display:inline-flex; align-items:center; gap:6px; padding:3px 12px; border-radius:999px; background:#fffdf7; color:#1b1b1b; font-weight:700; font-size:14px}
+.oc-need i{font-style:normal; font-size:18px; letter-spacing:.04em}
+.oc-need.red i{color:#c8302c}
+.oc-again{padding:3px 12px; border-radius:999px; background:rgba(230,195,106,.2); border:1px solid var(--gold); color:var(--gold2); font-weight:700; font-size:14px}
+.oc-last{position:relative; z-index:1; font-size:13.5px; text-align:center; color:#f4f1e6; min-height:1.4em; padding:0 10px; line-height:1.35}
+@keyframes ocPulse{50%{box-shadow:0 0 0 3px rgba(217,83,79,.55), 0 0 18px rgba(217,83,79,.55)}}
+
+/* 원카드 창 */
+.oc-call{position:absolute; inset:0; z-index:5; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px;
+  background:rgba(8,14,10,.55); backdrop-filter:blur(2px); animation:fade .15s}
+.oc-callwho{font-size:15px; color:#fff; text-align:center; padding:0 12px}
+.oc-callwho b{color:var(--gold2)}
+.oc-callbtn{width:clamp(132px,44vw,184px); height:clamp(132px,44vw,184px); border-radius:50%; border:4px solid rgba(255,255,255,.88); padding:0;
+  background:radial-gradient(circle at 35% 30%, #ff8f6e, #d9443a 60%, #a3221c); color:#fff;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
+  box-shadow:0 0 0 6px rgba(217,83,79,.3), 0 14px 40px rgba(0,0,0,.6); animation:ocCall .7s ease-in-out infinite; touch-action:manipulation}
+.oc-callbtn b{font-size:clamp(27px,8.5vw,36px); letter-spacing:-.02em; text-shadow:0 2px 6px rgba(0,0,0,.35)}
+.oc-callbtn small{font-size:15px; font-weight:800}
+.oc-callbtn.own{background:radial-gradient(circle at 35% 30%, #fff3c4, #e6c36a 55%, #a87f22); color:#2a1c06;
+  box-shadow:0 0 0 6px rgba(230,195,106,.35), 0 14px 40px rgba(0,0,0,.6)}
+.oc-callbtn.own b{text-shadow:none}
+.oc-callbtn:disabled{animation:none; filter:grayscale(.55) brightness(.75); cursor:default}
+.oc-callbtn.hit{transform:scale(.9); filter:none}
+@keyframes ocCall{50%{transform:scale(1.07); box-shadow:0 0 0 12px rgba(255,255,255,.12), 0 14px 46px rgba(0,0,0,.6)}}
+.oc-cd{position:relative; width:150px; height:6px; border-radius:3px; background:rgba(255,255,255,.15)}
+.oc-cd i{position:absolute; left:0; top:0; bottom:0; border-radius:3px; background:var(--gold2)}
+.oc-cd span{position:absolute; left:calc(100% + 8px); top:-7px; font-size:12px; color:rgba(255,255,255,.7); font-variant-numeric:tabular-nums}
+.oc-skip{background:none; border:1px solid rgba(255,255,255,.3); color:rgba(255,255,255,.8); border-radius:999px; padding:6px 18px; min-height:40px; font-size:13px}
+.oc-wait{font-size:13px; color:rgba(255,255,255,.7)}
+
+/* 짧은 알림 */
+.oc-flash{position:absolute; left:50%; top:10px; z-index:6; transform:translate(-50%,-10px); opacity:0; pointer-events:none; max-width:calc(100% - 20px);
+  padding:5px 16px; border-radius:999px; background:rgba(0,0,0,.75); font-weight:800; font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  transition:opacity .2s, transform .2s}
+.oc-flash.on{opacity:1; transform:translate(-50%,0)}
+.oc-flash.bad{color:#ff9b8f}
+.oc-flash.good{color:var(--green)}
+.oc-flash.gold{color:var(--gold2)}
+
+/* 내 패 */
+.oc-hand{position:relative; height:100px}
+.oc-card{position:absolute; padding:0; border:0; background:none; border-radius:6px}
+.oc-card .pc{transition:transform .12s, filter .12s}
+.oc-card .pc.new{box-shadow:0 0 0 2px #8fd0ff, 0 3px 8px rgba(0,0,0,.4)}
+.oc-card .pc.new.dim{filter:brightness(.7)}
+.oc-card .pc.sel{transform:translateY(-12px)}
+.oc-none{color:var(--gold2); font-weight:700; text-align:center; padding-top:28px}
+.oc-suit{font-size:20px}
+.oc-suit.red{color:#e0524c}
+
+@media (max-height:640px){
+  .oc-table{gap:6px; padding:6px}
+  .oc-pile{width:72px; height:104px}
+  .oc-under .pc, .oc-top .pc{--cw:72px; --ch:104px}
+  .oc-pile .pc .pc-mid{font-size:38px}
+}

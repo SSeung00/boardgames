@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0f1a15">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="놀이방">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>보드게임 놀이방</title>
+<link rel="stylesheet" href="core/style.css">
+</head>
+<body>
+<div id="app">
+  <!-- 첫 화면 -->
+  <section id="home" class="screen scroll">
+    <div class="home">
+      <h1 class="logo">놀이방</h1>
+      <p class="sub">친구들과 폰으로 하는 보드게임 · 빈자리는 AI 가 채워요</p>
+      <div class="sheet">
+        <label class="eyebrow" for="inName">이름</label>
+        <input id="inName" class="inp" maxlength="10" autocomplete="nickname" placeholder="다른 사람에게 보일 이름">
+        <div class="btns2">
+          <button class="btn primary" id="bCreate">방 만들기</button>
+          <button class="btn" id="bSolo">혼자 하기 (AI)</button>
+        </div>
+        <div class="or">친구 방에 들어가기</div>
+        <div class="split2">
+          <input id="inCode" class="inp code" maxlength="5" autocomplete="off" placeholder="방 코드" aria-label="방 코드">
+          <button class="btn" id="bJoin">들어가기</button>
+        </div>
+        <div class="err" id="homeErr" role="alert"></div>
+      </div>
+      <div class="eyebrow mt">게임 — 눌러서 규칙 보기</div>
+      <div class="ggrid" id="homeGames"></div>
+      <a class="extlink" href="https://sseung00.github.io/dalmuti/online.html">👑 달무티는 여기서 — 따로 만든 온라인 대전</a>
+      <p class="foot">방장의 화면이 게임을 진행합니다 · 서버 없이 기기끼리 직접 연결</p>
+    </div>
+  </section>
+
+  <!-- 대기실 -->
+  <section id="lobby" class="screen scroll" hidden>
+    <div class="home"><div class="sheet" id="lobbySheet"></div></div>
+  </section>
+
+  <!-- 게임 -->
+  <section id="game" class="screen gscreen" hidden>
+    <header class="gbar">
+      <div class="gtitle"><b id="gTitle"></b><span id="gStatus"></span></div>
+      <div class="gbtns">
+        <button class="ibtn" id="bLog" aria-label="기록">📜</button>
+        <button class="ibtn" id="bRules" aria-label="규칙">❔</button>
+        <button class="ibtn" id="bSound" aria-label="소리" aria-pressed="true">🔊</button>
+        <button class="ibtn" id="bLeave" aria-label="나가기">🚪</button>
+      </div>
+      <div class="timer" id="timer"></div>
+    </header>
+    <div class="ticker" id="ticker"></div>
+    <main id="stage" class="stage"></main>
+  </section>
+</div>
+<div id="modalHost"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script type="module" src="core/app.js"></script>
+</body>
+</html>

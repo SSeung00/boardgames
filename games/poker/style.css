@@ -1,0 +1,163 @@
+.pk{height:100%; display:flex; flex-direction:column}
+
+/* ---------- 상대 자리 ---------- */
+.pk-opps{display:grid; gap:5px; padding:6px 8px 4px; flex:0 0 auto}
+.seatchip.pk-seat{position:relative; flex-direction:column; align-items:stretch; gap:1px; padding:4px 6px 3px 5px; border-radius:12px; min-width:0; font-size:12px; line-height:1.25; transition:opacity .2s, border-color .2s}
+.pk-seat .av.sm{width:20px; height:20px; font-size:10px}
+.pk-s1{display:flex; align-items:center; gap:4px; min-width:0}
+.pk-seat .nm{flex:1; min-width:0; max-width:none; font-size:12.5px}
+.pk-seat .away{font-size:9.5px; padding:0 3px}
+.pk-s2{display:flex; justify-content:space-between; align-items:center; gap:3px; min-height:16px}
+.pk-stk{font-weight:800; color:var(--gold2); font-variant-numeric:tabular-nums; font-size:12.5px; white-space:nowrap}
+.pk-stk::before{content:""; display:inline-block; width:8px; height:8px; margin-right:3px; border-radius:50%; background:radial-gradient(circle at 35% 30%, #fff6 0 25%, transparent 30%), var(--gold); box-shadow:0 0 0 1.5px #8a6a1f inset; vertical-align:0}
+.pk-hc{display:flex; gap:2px; flex:0 0 auto}
+.pk-s3{display:flex; justify-content:space-between; align-items:center; gap:3px; min-height:17px}
+.pk-st{color:var(--muted); font-size:11.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0}
+.pk-st .pk-ai{color:#ff9b8f}
+.pk-plus{color:var(--green)}
+.pk-tm{color:var(--gold2); font-weight:700; font-variant-numeric:tabular-nums}
+.pk-tm.low{color:#ff9b8f}
+.pk-seat.pk-fold{opacity:.5}
+.pk-seat.pk-allin{border-color:rgba(255,155,143,.55)}
+.pk-seat.pk-win{border-color:var(--green); box-shadow:0 0 0 1px var(--green), 0 0 16px rgba(92,196,137,.35)}
+.pk-seat.turn{background:rgba(230,195,106,.12)}
+/* 한 줄에 4칸일 때: 조금 더 작게 */
+.pk-dense .seatchip.pk-seat{padding:3px 4px 3px 4px}
+.pk-dense .pk-seat .av.sm{width:16px; height:16px; font-size:9px; box-shadow:0 0 0 1.5px rgba(0,0,0,.4)}
+.pk-dense .pk-seat .nm{font-size:12px}
+.pk-dense .pk-b{position:absolute; top:-4px; right:4px; font-size:8.5px; padding:2px 3px; background:#2c3d33; box-shadow:0 0 0 1.5px #0f1a15}
+.pk-dense .pk-b.d{width:14px; height:14px; background:#f4f1e6}
+.pk-dense .pk-stk{font-size:12px}
+.pk-dense .pk-stk::before{display:none}
+.pk-dense .pk-mini{font-size:9.5px; min-width:17px; padding:2px 1px}
+.pk-dense .pk-bet{font-size:11px; padding:0 4px}
+
+/* 자리 표시 · 칩 · 작은 카드 */
+.pk-b{font-style:normal; flex:0 0 auto; font-size:9.5px; font-weight:800; line-height:1; padding:2px 4px; border-radius:6px; background:rgba(255,255,255,.12); color:var(--ink); letter-spacing:.02em}
+.pk-b.d{background:#f4f1e6; color:#1b1b1b; border-radius:50%; width:15px; height:15px; padding:0; display:inline-grid; place-items:center}
+.pk-bet{flex:0 0 auto; font-size:11.5px; font-weight:800; color:#1b1b1b; background:linear-gradient(180deg,var(--gold2),var(--gold)); border-radius:999px; padding:0 6px; line-height:16px; font-variant-numeric:tabular-nums}
+.pk-bet.pop{animation:pkPop .45s ease}
+@keyframes pkPop{0%{transform:translateY(-8px) scale(1.25); opacity:.2} 100%{transform:none; opacity:1}}
+.pk-back{display:inline-block; width:10px; height:14px; border-radius:2px; background:repeating-linear-gradient(45deg,#7b2f3a 0 2px,#5c2029 2px 4px); border:1px solid #e9d7a8}
+.pk-mini{display:inline-block; font-size:10.5px; font-weight:800; line-height:1; padding:2px 2px; border-radius:3px; background:#fffdf7; color:#1b1b1b; min-width:20px; text-align:center}
+.pk-mini.red{color:#c8302c}
+.pk-mini.hl{box-shadow:0 0 0 1.5px var(--gold2)}
+
+/* ---------- 펠트 ---------- */
+.pk-table{flex:1; min-height:0; margin:2px 8px 6px; border-radius:22px; position:relative; display:flex; flex-direction:column; align-items:center; gap:7px; padding:8px 8px 8px;
+  box-shadow:inset 0 0 0 2px rgba(230,195,106,.25), inset 0 10px 40px rgba(0,0,0,.4); overflow:hidden; container-type:size}
+.pk-info{width:100%; display:flex; align-items:center; justify-content:center; gap:8px; font-size:12px; color:rgba(255,255,255,.75); min-height:22px; flex-wrap:wrap}
+.pk-info b{color:#fff}
+.pk-street{font-size:12px; padding:1px 9px; border-radius:999px; background:rgba(0,0,0,.35); color:var(--gold2)!important; border:1px solid rgba(230,195,106,.4)}
+.pk-lastbtn{font-size:11.5px; padding:2px 8px; min-height:22px; border-radius:999px; border:1px solid rgba(255,255,255,.3); background:rgba(0,0,0,.25); color:#fff}
+.pk-board{display:flex; gap:5px; justify-content:center; flex:0 0 auto}
+.pk-board .pc, .pk-slot{--cw:50px; --ch:72px}
+.pk-slot{width:var(--cw); height:var(--ch); border-radius:6px; border:1.5px dashed rgba(255,255,255,.2); background:rgba(0,0,0,.1)}
+.pk-board .pc.pk-new{animation:pkFlip .45s ease both}
+@keyframes pkFlip{from{transform:translateY(-14px) rotateY(90deg); opacity:0}}
+.pc.pk-hl{box-shadow:0 0 0 2.5px var(--gold2), 0 0 14px rgba(245,220,148,.6), 0 3px 8px rgba(0,0,0,.4)}
+.pk-board .pc.dim{filter:brightness(.5)}
+.pk-mid{flex:1; min-height:0; width:100%; overflow-y:auto; display:flex; flex-direction:column; align-items:center; gap:4px; -webkit-overflow-scrolling:touch}
+.pk-pot{display:flex; align-items:center; gap:6px; font-size:15px; color:#f4f1e6; padding:3px 14px; border-radius:999px; background:rgba(0,0,0,.3)}
+.pk-pot b{color:var(--gold2); font-size:18px; font-variant-numeric:tabular-nums}
+.pk-chipico{width:14px; height:14px; border-radius:50%; background:radial-gradient(circle, var(--gold) 0 35%, #fff 36% 48%, var(--gold) 49%); box-shadow:0 0 0 1.5px #8a6a1f}
+.pk-side{font-size:12px; color:rgba(255,255,255,.75)}
+.pk-runout{font-size:13px; font-weight:800; color:#ffb4a8; animation:blink 1.2s ease-in-out infinite}
+.pk-line{font-size:13.5px; color:#f4f1e6; text-align:center; min-height:1.4em; padding:0 6px}
+.pk-line b{color:var(--gold2)}
+
+/* 판 결과 */
+.pk-res{width:100%; display:flex; flex-direction:column; gap:5px; animation:fade .25s}
+.pk-rt{text-align:center; font-size:12px; font-weight:800; letter-spacing:.12em; color:var(--gold2)}
+.pk-rt:empty{display:none}
+.pk-prow{display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:4px 8px; font-size:13px; padding:4px 8px; border-radius:10px; background:rgba(0,0,0,.28)}
+.pk-pl{color:rgba(255,255,255,.75)}
+.pk-pl b{color:#fff}
+.pk-pw{display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px}
+.pk-wn{display:inline-flex; align-items:center; gap:4px; color:var(--green); font-weight:700}
+.pk-wn b{color:#fff}
+.pk-pw em{font-style:normal; font-weight:800; color:var(--gold2)}
+.pk-shows{display:flex; flex-direction:column; gap:4px}
+.pk-show{display:grid; grid-template-columns:24px minmax(0,1fr) auto auto; align-items:center; gap:6px; padding:3px 8px; border-radius:10px; background:rgba(0,0,0,.18); font-size:13px}
+.pk-show .nm{font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.pk-show.me .nm{color:var(--green)}
+.pk-show.win{background:rgba(92,196,137,.18); box-shadow:0 0 0 1px rgba(92,196,137,.55) inset}
+.pk-cards{display:flex; gap:3px}
+.pk-hn{font-weight:800; color:var(--gold2); font-size:12.5px; white-space:nowrap}
+.pk-show:not(.win) .pk-hn{color:rgba(255,255,255,.7)}
+.pk-nosd{text-align:center; font-size:12.5px; color:rgba(255,255,255,.75)}
+.pk-bust{text-align:center; font-size:13px; font-weight:700; color:#ffb4a8}
+.pk-mboard{margin:4px 0 10px}
+.pk-mboard .pc{--cw:40px; --ch:56px}
+.pk-mres .pk-prow{background:rgba(255,255,255,.05)}
+.pk-mres .pk-show{background:rgba(255,255,255,.04)}
+
+/* ---------- 아래: 내 패 · 행동 ---------- */
+.pk-dock{transition:box-shadow .2s}
+.pk-dock.pk-act{box-shadow:inset 0 2px 0 var(--gold), 0 -8px 24px -12px rgba(230,195,106,.5)}
+.pk-me{display:flex; align-items:center; gap:12px; padding:0 4px 2px}
+.pk-hole{display:flex; gap:6px; flex:0 0 auto; min-height:92px; align-items:center}
+.pk-hole .pc.pk-deal{animation:pkDeal .4s ease both}
+.pk-hole .pc.pk-deal + .pc.pk-deal{animation-delay:.12s}
+@keyframes pkDeal{from{transform:translateY(-40px) rotate(-8deg); opacity:0}}
+.pk-nohole{width:134px; text-align:center; color:var(--muted); font-size:13px}
+.pk-mine{flex:1; min-width:0; display:flex; flex-direction:column; gap:3px}
+.pk-mystk{display:flex; align-items:center; gap:5px; flex-wrap:wrap}
+.pk-mystk > b{font-size:22px; color:var(--gold2); font-variant-numeric:tabular-nums; line-height:1.1}
+.pk-mystk small{color:var(--muted); font-size:12px; margin-right:2px}
+.pk-delta{font-size:12.5px; font-weight:800}
+.pk-delta.up{color:var(--green)}
+.pk-delta.down{color:#ff9b8f}
+.pk-mysub{display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--muted); min-height:18px}
+.pk-mysub .pk-bet{font-size:12.5px; line-height:18px}
+.pk-made{font-size:14px; font-weight:800; color:#fff; min-height:20px}
+.pk-good{color:var(--green)}
+.pk-folded{color:var(--muted); font-weight:700}
+.pk-dock .hint small{color:var(--faint)}
+.pk-dock .actions .btn{padding:10px 6px; white-space:nowrap}
+
+/* 레이즈 판 */
+.pk-raise{display:flex; flex-direction:column; gap:7px; animation:rise .18s ease}
+.pk-rhead{display:flex; justify-content:space-between; align-items:baseline; gap:8px; padding:0 2px}
+.pk-rhead span{font-size:14px; font-weight:700}
+.pk-rhead small{display:block; font-size:11.5px; color:var(--muted); font-weight:400}
+.pk-rhead b{font-size:24px; color:var(--gold2); font-variant-numeric:tabular-nums}
+.pk-rslide{display:flex; align-items:center; gap:8px}
+.pk-rslide input{flex:1; min-width:0; height:40px; accent-color:var(--gold)}
+.pk-step{flex:0 0 auto; width:42px; height:40px; border-radius:10px; border:1px solid var(--line2); background:rgba(255,255,255,.06); font-size:20px; font-weight:700; padding:0}
+.pk-quick{display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px}
+.pk-qb{display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:44px; padding:3px 2px; border-radius:10px; border:1px solid var(--line2); background:rgba(255,255,255,.05); font-size:13px; font-weight:700; line-height:1.2}
+.pk-qb small{font-size:11px; color:var(--muted); font-weight:400}
+.pk-qb.on{border-color:var(--gold); background:rgba(230,195,106,.16)}
+.btn.pk-allok{background:linear-gradient(180deg,#d9534f,#a8322f)}
+
+/* 레이즈 판이 열리면 내 패를 줄여 펠트 자리를 남긴다 */
+.pk-raising .pk-hole{min-height:0}
+.pk-raising .pk-hole .pc{--cw:42px; --ch:60px}
+.pk-raising .pk-hole .pc .pc-corner{font-size:13px}
+.pk-raising .pk-hole .pc .pc-mid{font-size:22px}
+.pk-raising .pk-hole .pc .pc-corner.br{display:none}
+.pk-raising .pk-mystk > b{font-size:18px}
+
+/* 공용 카드 크기는 펠트의 실제 높이 · 폭에 맞춘다 */
+@container (min-width:330px) and (min-height:260px){
+  .pk-board .pc, .pk-slot{--cw:56px; --ch:80px}
+}
+@container (max-height:175px){
+  .pk-line{display:none}
+  .pk-board .pc, .pk-slot{--cw:40px; --ch:57px}
+  .pk-board .pc .pc-corner{font-size:12px}
+  .pk-board .pc .pc-mid{font-size:20px}
+  .pk-board .pc .pc-corner.br{display:none}
+}
+@container (max-height:120px){
+  .pk-info{display:none}
+}
+@container (max-height:95px){
+  .pk-board .pc, .pk-slot{--cw:32px; --ch:46px}
+  .pk-board .pc .pc-mid{font-size:16px}
+}
+@media (max-height:640px){
+  .pk-hole{min-height:80px}
+  .pk-hole .pc{--cw:56px; --ch:80px}
+}
