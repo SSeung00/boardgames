@@ -1,7 +1,7 @@
 /* App shell — home, lobby, game screen, results. Each game draws its own area via games/<id>/ui.js. */
 import { GAMES, gameById } from "../games/registry.js";
-import { Room, cleanName, aiName } from "./host.js";
-import { net, token, hostRoom, joinRoom, Rejoin, sendConn, sendToHost, leaveNet, shareLink, Awake } from "./net.js";
+import { Room, cleanName, aiName, savedRoom, forgetSavedRoom } from "./host.js";
+import { net, token, hostRoom, joinRoom, Rejoin, sendConn, sendToHost, leaveNet, shareLink, Awake, lastRoom, forgetRoom, hostingHere } from "./net.js";
 import {
   $, el, esc, prefs, savePrefs, sound, buzz, toast, modal, closeAllModals, head, buttonRow, choose, avatarHTML, avatarColor
 } from "./ui.js";
@@ -50,17 +50,14 @@ function toHost(msg) {
   else sendToHost(msg);
 }
 
-net.on.hostReady = code => {
-  room = new Room({ name: prefs.name, token, code, deliver });
-  room.lobby();
+net.on.hostReady = (code, reopen) => {
+  const saved = reopen ? savedRoom(code) : null;
+  room = new Room({ name: prefs.name, token, code, deliver, saved });
+  if (!saved) room.lobby();
+  else toast(L("방을 다시 열었습니다 — 친구들이 곧 자동으로 다시 들어옵니다", "Room reopened — your friends will reconnect automatically"));
 };
 net.on.connection = conn => {
-  conn.on("data", msg => {
-    if (!room) return;
-    if (msg && msg.t === "hello") return room.hello(conn, msg);
-    const p = room.players.findIndex(x => x.conn === conn);
-    if (p >= 0) room.receive(p, msg);
-  });
+  conn.on("data", msg => { if (room) room.onData(conn, msg); });
   conn.on("close", () => room && room.onClose(conn));
 };
 net.on.message = msg => onMessage(msg);
@@ -82,16 +79,50 @@ function onMessage(msg) {
   if (msg.t === "lobby") return showLobby(msg);
   if (msg.t === "state") return onState(msg);
   if (msg.t === "error") { if (!msg.stale) { toast(loc(msg.text)); sound.bad(); } return; }
-  if (msg.t === "reject") { entryError(msg.text); leaveNet(); setBusy(false); show("home"); return; }
+  if (msg.t === "reject") { entryError(msg.text); leaveNet(); forgetRoom(); setBusy(false); show("home"); renderResume(); return; }
+  if (msg.t === "wait") return showWait(msg);
+  if (msg.t === "closed") {
+    leaveRoom();
+    forgetRoom();
+    renderResume();
+    modal((box, close) => {
+      head(box, "", L("방장이 방을 닫았습니다", "The host closed the room"), L("함께해 주셔서 고마워요!", "Thanks for playing!"));
+      buttonRow(box, [{ label: L("확인", "OK"), primary: true, on: () => close() }]);
+    });
+  }
 }
 
-function leaveRoom() {
+/* Leaving. Guests tell the host (bye). The host only ends the room via closeRoom(); simply closing the page keeps it
+   saved so it can be reopened from the same link. */
+function leaveRoom(bye) {
   closeAllModals();
-  if (room && room.runner) room.runner.stop();
+  if (room) room.stop();
   room = null; lobbyMsg = null;
   unmountGame();
-  leaveNet();
+  if (bye) forgetRoom();
+  leaveNet(bye);
   show("home");
+  renderResume();
+}
+function closeRoom() {
+  if (room) room.close();
+  forgetRoom();
+  setTimeout(() => leaveRoom(false), 300);
+}
+/* My own saved room. A reload of the hosting tab reopens it at once; from anywhere else, first try to join (it may still be
+   open in another tab of this browser) and reopen it here only if nobody is hosting it. */
+function reopenRoom(code) {
+  if (hostingHere(code)) return hostRoom(code);
+  joinRoom(code, false, prefs.name, () => hostRoom(code));
+}
+function confirmClose() {
+  modal((box, close) => {
+    head(box, "", L("방을 닫을까요?", "Close the room?"),
+      L("모두의 게임이 끝나고 방이 사라집니다. 창을 그냥 닫으면 방은 남아 있어서 같은 링크로 다시 열 수 있습니다.",
+        "Everyone's game ends and the room is gone. If you just close this page instead, the room is kept and can be reopened from the same link."));
+    buttonRow(box, [{ label: L("취소", "Cancel"), on: () => close() },
+                    { label: L("방 닫기", "Close room"), danger: true, on: () => { close(); closeRoom(); } }]);
+  });
 }
 
 /* ===================== Home ===================== */
@@ -105,6 +136,30 @@ function renderHomeGames() {
     b.onclick = () => showRules(E);
     box.appendChild(b);
   }
+}
+/* "Rejoin" card: my saved room (host) or the last room I joined (guest) */
+function renderResume() {
+  const box = $("homeResume");
+  if (!box) return;
+  box.innerHTML = "";
+  if (net.role) return;
+  const saved = savedRoom(), last = lastRoom();
+  let card = null;
+  if (saved) {
+    const g = saved.game && gameById(saved.game.id);
+    const what = g ? L(`${loc(g.engine.name)} 진행 중`, `${loc(g.engine.name)} in progress`) : L("대기실", "lobby");
+    card = { title: L(`방 ${saved.code} 다시 열기`, `Reopen room ${saved.code}`), sub: L(`내가 만든 방 · ${what}`, `My room · ${what}`),
+      go: () => { if (needName()) reopenRoom(saved.code); }, forget: () => { forgetSavedRoom(); forgetRoom(); renderResume(); } };
+  } else if (last && last.role === "guest") {
+    card = { title: L(`방 ${last.code} 다시 들어가기`, `Rejoin room ${last.code}`), sub: L("마지막으로 들어갔던 방", "The last room you joined"),
+      go: () => { if (needName()) joinRoom(last.code, false, prefs.name); }, forget: () => { forgetRoom(); renderResume(); } };
+  }
+  if (!card) return;
+  const c = el("div", "resume", `<button class="resume-go"><b>↩ ${esc(card.title)}</b><small>${esc(card.sub)}</small></button>` +
+    `<button class="resume-x" aria-label="${L("지우기", "Dismiss")}">✕</button>`);
+  c.querySelector(".resume-go").onclick = card.go;
+  c.querySelector(".resume-x").onclick = card.forget;
+  box.appendChild(c);
 }
 function showRules(E) {
   modal((box, close) => {
@@ -142,7 +197,7 @@ function segField(parent, label, values, current, onPick, fmt, disabled, note) {
 }
 
 function showLobby(msg) {
-  lobbyMsg = msg;
+  lobbyMsg = msg; waitMsg = null;
   closeAllModals();
   unmountGame();
   show("lobby");
@@ -174,7 +229,8 @@ function showLobby(msg) {
     box.appendChild(b);
     sh.appendChild(box);
     const ul = el("ul", "plist");
-    msg.players.forEach((p, i) => ul.appendChild(el("li", "", `${avatarHTML(p.name, i)}<span class="nm">${esc(p.name)}</span>` +
+    msg.players.forEach((p, i) => ul.appendChild(el("li", p.away ? "away" : "", `${avatarHTML(p.name, i)}<span class="nm">${esc(p.name)}</span>` +
+      (p.away ? `<span class="tag away">${L("재접속 중", "Reconnecting")}</span>` : "") +
       (p.host ? `<span class="tag host">${L("방장", "Host")}</span>` : "") + (i === msg.you ? `<span class="tag me">${L("나", "Me")}</span>` : ""))));
     sh.appendChild(ul);
   }
@@ -195,10 +251,17 @@ function showLobby(msg) {
   about.querySelector("button").onclick = () => showRules(E);
   sh.appendChild(about);
 
-  const humans = msg.players.length;
-  const seatVals = []; for (let k = Math.max(E.players.min, humans); k <= E.players.max; k++) seatVals.push(k);
-  segField(sh, L("인원", "Players"), seatVals, st.seats, v => toHost({ t: "setting", key: "seats", value: v }), v => L(v + "명", String(v)), !isHost,
-    st.seats > humans ? L(`AI ${st.seats - humans}명이 함께합니다`, `${st.seats - humans} AI player${st.seats - humans > 1 ? "s" : ""} will join`) : "");
+  const humans = msg.players.length, seats = msg.seats || humans, ai = Math.max(0, seats - humans);
+  const tooMany = humans > E.players.max;
+  const seatVals = local ? [] : ["auto"];
+  for (let k = Math.max(E.players.min, humans); k <= E.players.max; k++) seatVals.push(k);
+  const aiNote = ai ? L(`AI ${ai}명`, `${ai} AI`) : L("AI 없음", "no AI");
+  segField(sh, L("인원", "Players"), seatVals, st.seats, v => toHost({ t: "setting", key: "seats", value: v }),
+    v => v === "auto" ? L("자동", "Auto") : L(v + "명", String(v)), !isHost,
+    tooMany ? L(`이 게임은 최대 ${E.players.max}명입니다 — 다른 게임을 고르세요`, `This game allows at most ${E.players.max} players — pick another game`)
+      : local ? L(`나 + AI ${ai}명`, `you + ${ai} AI`)
+      : L(`사람 ${humans}명 + ${aiNote} = ${seats}명`, `${humans} ${humans > 1 ? "people" : "person"} + ${aiNote} = ${seats} seats`) +
+        (st.seats === "auto" ? L(` · 자동: 최소 인원(${E.players.min}명)까지만 AI 로 채웁니다`, ` · Auto: AI only fills up to the minimum (${E.players.min})`) : ""));
   segField(sh, L("AI 수준", "AI level"), ["easy", "normal", "hard"], st.level, v => toHost({ t: "setting", key: "level", value: v }),
     v => ({ easy: L("쉬움", "Easy"), normal: L("보통", "Normal"), hard: L("어려움", "Hard") })[v], !isHost);
   segField(sh, L("제한 시간", "Turn timer"), [15, 30, 60, 0], st.timer, v => toHost({ t: "setting", key: "timer", value: v }),
@@ -209,14 +272,42 @@ function showLobby(msg) {
   }
 
   const row = el("div", "row split");
-  const leave = el("button", "btn", local ? L("처음으로", "Home") : L("나가기", "Leave"));
-  leave.onclick = leaveRoom;
+  const leave = el("button", "btn" + (isHost && !local ? " danger" : ""), local ? L("처음으로", "Home") : isHost ? L("방 닫기", "Close room") : L("나가기", "Leave"));
+  leave.onclick = local ? () => leaveRoom(false) : isHost ? confirmClose : () => leaveRoom(true);
   row.appendChild(leave);
   if (isHost) {
-    const start = el("button", "btn primary", L(`시작하기 (${st.seats}명)`, `Start (${st.seats} players)`));
+    const start = el("button", "btn primary", L(`시작하기 (${seats}명)`, `Start (${seats} players)`));
+    start.disabled = tooMany;
     start.onclick = () => toHost({ t: "start" });
     row.appendChild(start);
   } else row.appendChild(el("div", "waiting", `<span class="dot"></span>${L("방장이 시작하기를 기다리는 중", "Waiting for the host to start")}`));
+  sh.appendChild(row);
+}
+
+/* Joined during a game: wait for the next one */
+let waitMsg = null;
+function showWait(msg) {
+  waitMsg = msg; lobbyMsg = null;
+  closeAllModals();
+  unmountGame();
+  show("lobby");
+  const sh = $("lobbySheet"), E = gameById(msg.game).engine;
+  sh.innerHTML = "";
+  sh.appendChild(langButton());
+  sh.insertAdjacentHTML("beforeend", `<div class="eyebrow">${L("대기 중", "Waiting")}</div>` +
+    `<h2>${L("게임 진행 중", "Game in progress")}</h2>` +
+    `<p>${L(`<b>${E.icon} ${esc(loc(E.name))}</b> — 이번 판이 끝나고 방장이 다음 판을 시작하면 함께합니다. 이 화면을 켜 둔 채로 기다려 주세요.`,
+            `<b>${E.icon} ${esc(loc(E.name))}</b> — you'll join when this game ends and the host starts the next one. Keep this screen open.`)}</p>`);
+  const ul = el("ul", "plist");
+  msg.players.forEach((p, i) => ul.appendChild(el("li", "", `${avatarHTML(aiName(p.name, lang), i)}<span class="nm">${esc(p.kind === "ai" ? aiName(p.name, lang) : p.name)}</span>` +
+    (p.kind === "ai" ? '<span class="tag">AI</span>' : "") + (p.host ? `<span class="tag host">${L("방장", "Host")}</span>` : ""))));
+  for (const n of msg.waiting || []) ul.appendChild(el("li", "", `${avatarHTML(n, 9)}<span class="nm">${esc(n)}</span><span class="tag me">${L("대기", "Waiting")}</span>`));
+  sh.appendChild(ul);
+  const row = el("div", "row split");
+  const leave = el("button", "btn", L("나가기", "Leave"));
+  leave.onclick = () => leaveRoom(true);
+  row.appendChild(leave);
+  row.appendChild(el("div", "waiting", `<span class="dot"></span>${L("다음 판을 기다리는 중", "Waiting for the next game")}`));
   sh.appendChild(row);
 }
 
@@ -326,6 +417,8 @@ function renderShell(m) {
     else if (mine) status = L("내 차례", "Your turn");
     else if (m.pending.length) status = L(`${names[m.pending[0].p]} 님 차례`, `${names[m.pending[0].p]}'s turn`);
   }
+  const away = m.pending.find(a => a.away);
+  if (away && !mine) status = L(`${names[away.p]} 님 재접속 기다리는 중…`, `Waiting for ${names[away.p]} to reconnect…`);
   $("gStatus").textContent = status;
   document.body.classList.toggle("myturn", !!mine);
   if (mine && mine.id !== lastAskId) {
@@ -385,13 +478,16 @@ $("bLog").onclick = () => modal(box => {
 $("bSound").onclick = () => { prefs.sound = !prefs.sound; savePrefs(); renderSound(); if (prefs.sound) sound.join(); };
 function renderSound() { $("bSound").setAttribute("aria-pressed", String(prefs.sound)); $("bSound").textContent = prefs.sound ? "🔊" : "🔇"; }
 $("bLeave").onclick = () => {
-  const isHost = !!room;
+  const isHost = !!room, online = net.role === "host";
   modal((box, close) => {
-    head(box, "", L("나가시겠어요?", "Leave the game?"),
-      isHost && net.role === "host" ? L("방장이 나가면 모두의 게임이 끝납니다.", "If the host leaves, the game ends for everyone.") : "");
+    head(box, "", isHost && online ? L("방장 메뉴", "Host menu") : L("나가시겠어요?", "Leave the game?"),
+      isHost && online ? L("「방 닫기」를 누르면 모두의 게임이 끝납니다. 창을 그냥 닫으면 방은 남아 있어 같은 링크로 다시 열 수 있습니다.",
+                          "\"Close room\" ends the game for everyone. If you just close this page, the room is kept and can be reopened from the same link.")
+        : !isHost ? L("AI 가 대신 둡니다. 같은 링크와 같은 이름으로 다시 들어오면 자리를 되찾습니다.", "AI will play for you. Rejoin with the same link and name to take your seat back.") : "");
     const btns = [{ label: L("계속하기", "Keep playing"), on: () => close() }];
     if (isHost) btns.push({ label: L("대기실로", "Back to lobby"), on: () => { close(); toHost({ t: "lobby" }); } });
-    btns.push({ label: L("나가기", "Leave"), danger: true, on: () => { close(); leaveRoom(); } });
+    if (isHost && online) btns.push({ label: L("방 닫기", "Close room"), danger: true, on: () => { close(); closeRoom(); } });
+    else btns.push({ label: L("나가기", "Leave"), danger: true, on: () => { close(); leaveRoom(!isHost); } });
     buttonRow(box, btns);
   });
 };
@@ -402,6 +498,8 @@ onLang(() => {
   applyStatic();
   renderHomeGames();
   if (!$("lobby").hidden && lobbyMsg) showLobby(lobbyMsg);
+  else if (!$("lobby").hidden && waitMsg) showWait(waitMsg);
+  renderResume();
   if (game && game.mod && game.last) {
     try { if (game.ui && game.ui.destroy) game.ui.destroy(); } catch (e) { console.error(e); }
     $("stage").innerHTML = "";
@@ -429,8 +527,10 @@ $("inName").value = prefs.name || "";
 net.name = prefs.name;
 const hashCode = (location.hash || "").replace("#", "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 show("home");
+renderResume();
 if (hashCode.length === 5) {
   $("inCode").value = hashCode;
-  if (prefs.name) joinRoom(hashCode, false, prefs.name);
+  if (savedRoom(hashCode) && (prefs.name || hostingHere(hashCode))) reopenRoom(hashCode);   // my own room: reopen it where it left off
+  else if (prefs.name) joinRoom(hashCode, false, prefs.name);
   else { entryError({ ko: "이름을 적고 「들어가기」를 누르세요.", en: "Enter your name and press Join." }); $("inName").focus(); }
 }

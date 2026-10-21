@@ -46,6 +46,18 @@ function hit(dur, o = {}) {
   g.gain.setValueAtTime(o.gain || .14, t); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
   s.connect(bp).connect(g).connect(c.destination); s.start(t); s.stop(t + dur + .03);
 }
+/* A worker timer: keeps ticking even when browsers throttle hidden tabs (the host's game clock, heartbeats). */
+export const steadySleep = (() => {
+  try {
+    const src = "onmessage = e => setTimeout(() => postMessage(e.data), e.data.ms);";
+    const w = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+    const waits = new Map();
+    let n = 0;
+    w.onmessage = e => { const f = waits.get(e.data.id); if (f) { waits.delete(e.data.id); f(); } };
+    return ms => new Promise(r => { const id = ++n; waits.set(id, r); w.postMessage({ id, ms }); });
+  } catch (e) { return ms => new Promise(r => setTimeout(r, ms)); }
+})();
+
 export const sound = {
   wake() { ac(); },
   deal() { hit(.05, { f: 2400, q: 1.5, gain: .08 }); },

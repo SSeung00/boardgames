@@ -202,3 +202,13 @@ html[lang="en"] .seatchip.me .nm::after{content:" (me)"}
 body.myturn .gstatus{color:#fff; font-weight:700}
 .gtitle{justify-content:center; min-height:32px}
 html[lang="en"] .logo{font-size:38px; letter-spacing:.02em}
+
+/* ---------- Rejoin card · reconnecting players ---------- */
+.resume{display:flex; gap:6px; margin:0 0 12px}
+.resume-go{flex:1; display:flex; flex-direction:column; align-items:flex-start; gap:2px; text-align:left; padding:12px 14px; border-radius:13px;
+  border:1px solid rgba(230,195,106,.55); background:linear-gradient(180deg,rgba(230,195,106,.18),rgba(230,195,106,.07)); color:var(--ink)}
+.resume-go b{font-size:15.5px; color:var(--gold2)}
+.resume-go small{font-size:12.5px; color:var(--muted)}
+.resume-x{width:44px; border-radius:13px; border:1px solid var(--line); background:rgba(255,255,255,.04); color:var(--muted)}
+.tag.away{color:#ff9b8f; border-color:rgba(255,155,143,.5)}
+.plist li.away{opacity:.7}

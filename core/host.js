@@ -13,9 +13,15 @@
      view(S, p) → what that person may see
      filterEvent(ev, p, S) → ev | redacted copy | null   (optional)
      over(S) → bool,  results(S) → [{p, rank, score, note}]
-*/
+
+   Staying in the room (nothing is lost unless the host presses "Close room"):
+   - Everything is saved in the host's localStorage after every change. If the host's page closes or reloads,
+     opening the same link (or the home screen's "Reopen" card) restores the room and the game where it left off.
+   - People are identified by a per-tab token; someone who returns from another browser gets their seat back by name.
+   - A disconnected player keeps their seat for a grace period before the AI plays for them.
+   - People who arrive during a game wait and join from the next game. */
 import { GAMES, gameById } from "../games/registry.js";
-import { LS, toast, sound } from "./ui.js";
+import { LS, toast, sound, steadySleep as hostSleep } from "./ui.js";
 import { L, tx } from "./i18n.js";
 
 /* AI seat names. The host picks the Korean name; each viewer's screen shows it in their own language (see aiName). */
@@ -24,90 +30,204 @@ export const AI_NAMES = [["다람쥐", "Squirrel"], ["너구리", "Raccoon"], ["
 const AI_EN = new Map(AI_NAMES);
 export const aiName = (name, lang) => (lang === "en" && AI_EN.has(name) ? AI_EN.get(name) : name);
 
-/* The host's clock — a worker timer, so the game keeps running even when browsers throttle hidden tabs. */
-export const hostSleep = (() => {
-  try {
-    const src = "onmessage = e => setTimeout(() => postMessage(e.data), e.data.ms);";
-    const w = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
-    const waits = new Map();
-    let n = 0;
-    w.onmessage = e => { const f = waits.get(e.data.id); if (f) { waits.delete(e.data.id); f(); } };
-    return ms => new Promise(r => { const id = ++n; waits.set(id, r); w.postMessage({ id, ms }); });
-  } catch (e) { return ms => new Promise(r => setTimeout(r, ms)); }
-})();
+const GRACE_DROP = 20000;      // a dropped player's seat waits this long before the AI takes over
+const GRACE_REOPEN = 60000;    // after the host reopens the room, everyone gets longer to reconnect
+const SILENT = 15000;          // a guest that sends nothing (not even a ping) for this long counts as disconnected
+const SAVE_TTL = 12 * 3600 * 1000;
+export const MAX_ROOM = Math.max(...GAMES.map(g => g.engine.players.max));
+
 
 export const cleanName = s => (String(s || "").replace(/\s+/g, " ").trim().slice(0, 10)) || L("손님", "Guest");
 
+/* The saved room of this device (host side), if recent */
+export function savedRoom(code) {
+  const s = LS.json("host", null);
+  if (!s || !s.code || Date.now() - s.at > SAVE_TTL) return null;
+  return !code || s.code === code ? s : null;
+}
+export function forgetSavedRoom() { LS.set("host", ""); }
+
 export class Room {
   /* deliver(player, msg): send a message to a person (app.js handles connection vs. local delivery) */
-  constructor({ name, token, code, deliver }) {
+  constructor({ name, token, code, deliver, saved }) {
     this.code = code;              // null = solo (AI only)
     this.deliver = deliver;
+    this.waiting = [];             // people who arrived during a game: {name, token, conn, online}
+    this.runner = null;
+    this.alive = true;
+    if (code) this.watch();
+    if (saved) return this.restore(saved, name, token);
     this.players = [{ name: cleanName(name), token, kind: "human", local: true, online: true, conn: null }];
-    const saved = LS.json("room", {});
-    this.settings = Object.assign({ game: GAMES[0].id, seats: 0, level: "normal", timer: 30, opts: {} }, saved);
+    const pref = LS.json("room", {});
+    this.settings = Object.assign({ game: GAMES[0].id, level: "normal", timer: 30, opts: {} }, pref);
+    // Online rooms start in "auto" (AI only fills up to the game's minimum); solo play starts with the game's usual size
+    this.settings.seats = code ? "auto" : 0;
     if (!gameById(this.settings.game)) this.settings.game = GAMES[0].id;
     this.fixSettings();
-    this.runner = null;
   }
   get engine() { return gameById(this.settings.game).engine; }
   humans() { return this.players.filter(p => p.kind === "human"); }
+  /* humans who will take part in the next game: seated humans still around + people waiting */
+  nextHumans() { return [...this.humans().filter(p => p.local || p.online), ...this.waiting.filter(w => w.online)]; }
 
+  /* settings.seats: "auto" (= max(humans, game minimum)) or a fixed total number of seats */
+  seatsFor(nHumans) {
+    const E = this.engine, st = this.settings;
+    if (st.seats === "auto") return Math.max(nHumans, E.players.min);
+    return Math.max(st.seats, nHumans, E.players.min);
+  }
   fixSettings() {
-    const E = this.engine, st = this.settings, h = this.humans().length;
-    if (!st.seats || st.seats < E.players.min || st.seats > E.players.max) st.seats = E.players.default;
-    if (st.seats < h) st.seats = Math.min(E.players.max, h);
+    const E = this.engine, st = this.settings, h = this.runner ? this.nextHumans().length : this.humans().length;
+    if (st.seats !== "auto") {
+      if (!st.seats || st.seats < E.players.min || st.seats > E.players.max) st.seats = this.code ? "auto" : E.players.default;
+      else if (st.seats < h) st.seats = Math.min(E.players.max, h);
+    }
     st.opts = st.opts || {};
     const o = {};
     for (const s of E.settings || []) o[s.key] = s.values.includes(st.opts[s.key]) ? st.opts[s.key] : s.default;
     st.opts = o;
   }
 
+  /* ----- Persistence (host device) ----- */
+  save() {
+    if (!this.code || !this.alive) return;
+    try {
+      const r = this.runner;
+      LS.put("host", {
+        code: this.code, at: Date.now(), settings: this.settings,
+        players: this.players.map(p => ({ name: p.name, token: p.token, kind: p.kind })),
+        waiting: this.waiting.map(w => ({ name: w.name, token: w.token })),
+        game: r && r.alive ? { id: r.E.id, S: r.S, runId: r.runId, seq: r.seq, settings: r.settings, finished: r.finished } : null
+      });
+    } catch (e) { console.error("save failed", e); }
+  }
+  restore(s, name, token) {
+    this.settings = s.settings;
+    const grace = Date.now() + GRACE_REOPEN;
+    this.players = s.players.map((p, i) => i === 0
+      ? { name: cleanName(p.name || name), token, kind: "human", local: true, online: true, conn: null }
+      : { ...p, local: false, online: p.kind === "ai", conn: null, graceUntil: p.kind === "human" ? grace : 0 });
+    this.waiting = (s.waiting || []).map(w => ({ ...w, conn: null, online: false }));
+    if (s.game && gameById(s.game.id)) {
+      this.runner = new Runner(this, gameById(s.game.id).engine, s.game.settings, s.game);
+      this.runner.run();
+    } else {
+      // lobby: people who don't come back within the grace period are removed
+      hostSleep(GRACE_REOPEN).then(() => {
+        if (this.runner) return;
+        const before = this.players.length;
+        this.players = this.players.filter(p => p.local || p.kind !== "human" || p.online);
+        if (this.players.length !== before) { this.fixSettings(); this.lobby(); }
+      });
+      this.lobby();
+    }
+    return this;
+  }
+
   /* ----- Connections ----- */
+  /* Guests ping every few seconds. WebRTC itself can take half a minute or more to notice a closed tab, a phone that
+     went to sleep or a lost network, so a silent connection is treated as dropped. */
+  async watch() {
+    while (this.alive) {
+      await hostSleep(3000);
+      const now = Date.now();
+      for (const x of [...this.players, ...this.waiting]) {
+        if (x.conn && x.online && x.conn.pinged && now - x.conn.seen > SILENT) this.drop(x.conn);
+      }
+    }
+  }
+  drop(conn) { try { conn.close(); } catch (e) { } this.onClose(conn); }
+  /* This page stops hosting (the room stays saved) */
+  stop() { this.alive = false; if (this.runner) this.runner.stop(); }
+  onData(conn, msg) {
+    if (!msg || !msg.t || !this.alive) return;
+    conn.seen = Date.now();
+    if (msg.t === "ping") { conn.pinged = true; try { conn.send({ t: "pong" }); } catch (e) { } return; }
+    if (msg.t === "gone") return this.drop(conn);              // their page is closing or reloading
+    if (msg.t === "hello") return this.hello(conn, msg);
+    const p = this.players.findIndex(x => x.conn === conn);
+    if (p >= 0) return this.receive(p, msg);
+    const w = this.waiting.find(x => x.conn === conn);
+    if (w && msg.t === "bye") { this.waiting.splice(this.waiting.indexOf(w), 1); this.save(); }
+  }
   hello(conn, msg) {
     const name = cleanName(msg.name);
-    const back = this.players.findIndex(x => !x.local && x.kind === "human" && x.token === msg.token);
-    if (back >= 0) {
-      const pl = this.players[back];
+    const attach = (pl, p) => {
       if (pl.conn && pl.conn !== conn) try { pl.conn.close(); } catch (e) { }
-      pl.conn = conn; pl.online = true;
-      if (this.runner) this.runner.presence(back, tx(`{${back}} 님이 다시 들어왔습니다`, `{${back}} is back`));
+      pl.conn = conn; pl.online = true; pl.token = msg.token; pl.graceUntil = 0;
+      if (this.runner) this.runner.presence(p, tx(`{${p}} 님이 다시 들어왔습니다`, `{${p}} is back`));
       else this.lobby();
+      this.save();
+    };
+    // 1) same tab coming back (token)  2) an empty human seat with the same name (another browser or a new tab)
+    let p = this.players.findIndex(x => !x.local && x.kind === "human" && x.token === msg.token);
+    if (p < 0) p = this.players.findIndex(x => !x.local && x.kind === "human" && !x.online && x.name === name);
+    if (p >= 0) return attach(this.players[p], p);
+    let w = this.waiting.find(x => x.token === msg.token) || (this.runner && this.waiting.find(x => !x.online && x.name === name));
+    if (w) {
+      if (w.conn && w.conn !== conn) try { w.conn.close(); } catch (e) { }
+      w.conn = conn; w.online = true; w.token = msg.token;
+      this.sendWait(w);
       return;
     }
     const reject = text => { try { conn.send({ t: "reject", text }); } catch (e) { } setTimeout(() => { try { conn.close(); } catch (e) { } }, 600); };
-    if (this.runner) return reject(tx("이미 게임이 진행 중인 방입니다. 이번 게임이 끝나면 들어올 수 있습니다.",
-      "A game is already in progress in this room. You can join when it ends."));
-    const max = Math.max(...GAMES.map(g => g.engine.players.max));
-    if (this.players.length >= max) return reject(tx(`방이 꽉 찼습니다 (최대 ${max}명).`, `The room is full (max ${max}).`));
-    this.players.push({ name, token: msg.token, kind: "human", conn, local: false, online: true });
+    const count = this.humans().length + this.waiting.length;
+    if (count >= MAX_ROOM) return reject(tx(`방이 꽉 찼습니다 (최대 ${MAX_ROOM}명).`, `The room is full (max ${MAX_ROOM}).`));
+    const unique = this.uniqueName(name);
+    if (this.runner) {
+      // A game is running (or its results are on screen): wait and join from the next game
+      w = { name: unique, token: msg.token, conn, online: true };
+      this.waiting.push(w);
+      this.sendWait(w);
+      toast(L(`${unique} 님이 들어왔습니다 — 다음 판부터 함께합니다`, `${unique} joined — they'll play from the next game`)); sound.join();
+      if (this.runner.finished) this.runner.broadcast(); else this.save();
+      return;
+    }
+    this.players.push({ name: unique, token: msg.token, kind: "human", conn, local: false, online: true });
     this.fixSettings();
-    toast(L(`${name} 님이 들어왔습니다`, `${name} joined`)); sound.join();
+    toast(L(`${unique} 님이 들어왔습니다`, `${unique} joined`)); sound.join();
     this.lobby();
   }
-  onClose(conn) {
+  uniqueName(name) {
+    const taken = new Set([...this.humans(), ...this.waiting].map(p => p.name));
+    if (!taken.has(name)) return name;
+    for (let k = 2; ; k++) if (!taken.has(name.slice(0, 8) + k)) return name.slice(0, 8) + k;
+  }
+  sendWait(w) {
+    const E = this.runner ? this.runner.E : this.engine;
+    try { w.conn.send({ t: "wait", code: this.code, game: E.id, players: this.publicPlayers(), waiting: this.waiting.map(x => x.name) }); } catch (e) { }
+  }
+  onClose(conn, bye) {
+    if (!this.alive) return;
+    const w = this.waiting.find(x => x.conn === conn);
+    if (w) { w.conn = null; w.online = false; if (bye) this.waiting.splice(this.waiting.indexOf(w), 1); this.save(); return; }
     const p = this.players.findIndex(x => x.conn === conn);
     if (p < 0) return;
     const pl = this.players[p];
     pl.conn = null; pl.online = false;
     if (!this.runner) {
       this.players.splice(p, 1);
+      this.fixSettings();
       toast(L(`${pl.name} 님이 나갔습니다`, `${pl.name} left`));
       this.lobby();
       return;
     }
-    this.runner.presence(p, tx(`{${p}} 님의 연결이 끊겼습니다 — 돌아올 때까지 AI 가 대신 둡니다`,
-      `{${p}} disconnected — AI plays for them until they're back`));
+    pl.graceUntil = bye ? 0 : Date.now() + GRACE_DROP;
+    this.runner.presence(p, bye
+      ? tx(`{${p}} 님이 나갔습니다 — AI 가 대신 둡니다 (같은 이름으로 다시 들어오면 자리를 되찾습니다)`, `{${p}} left — AI plays for them (rejoin with the same name to take the seat back)`)
+      : tx(`{${p}} 님의 연결이 끊겼습니다 — ${GRACE_DROP / 1000}초 기다린 뒤 AI 가 대신 둡니다`, `{${p}} disconnected — AI takes over after ${GRACE_DROP / 1000}s`));
+    this.save();
   }
   sendTo(p, msg) {
     const pl = this.players[p];
     if (pl && pl.kind === "human") this.deliver(pl, msg);
   }
-  /* A message from a person */
+  /* A message from a seated person */
   receive(p, msg) {
     if (!msg || !msg.t) return;
     const isHost = this.players[p] && this.players[p].local;
     if (msg.t === "act") { if (this.runner) this.runner.receive(p, msg); return; }
+    if (msg.t === "bye") { if (!isHost) this.onClose(this.players[p].conn, true); return; }
     if (!isHost) return;
     if (msg.t === "setting") return this.setSetting(msg.key, msg.value);
     if (msg.t === "start") return this.start();
@@ -117,62 +237,83 @@ export class Room {
 
   /* ----- Lobby ----- */
   publicPlayers() {
-    return this.players.map((pl, i) => ({ name: pl.name, kind: pl.kind === "ai" ? "ai" : (pl.online ? "human" : "away"), host: i === 0 && pl.kind === "human" }));
+    return this.players.map((pl, i) => ({ name: pl.name, kind: pl.kind === "ai" ? "ai" : (pl.online || pl.local ? "human" : "away"), host: i === 0 && pl.kind === "human" }));
   }
   lobby() {
-    const list = this.humans().map((pl, i) => ({ name: pl.name, host: i === 0 }));
-    this.humans().forEach((pl, i) => this.deliver(pl, { t: "lobby", you: i, code: this.code, players: list, settings: this.settings }));
+    const humans = this.humans();
+    const list = humans.map((pl, i) => ({ name: pl.name, host: i === 0, away: !pl.local && !pl.online }));
+    const n = this.seatsFor(humans.length);
+    humans.forEach((pl, i) => this.deliver(pl, { t: "lobby", you: i, code: this.code, players: list, settings: this.settings, seats: n }));
+    this.save();
   }
   setSetting(key, value) {
     if (this.runner) return;
-    if (key === "game") { if (!gameById(value)) return; this.settings.game = value; this.settings.seats = 0; this.settings.opts = {}; }
+    if (key === "game") { if (!gameById(value)) return; this.settings.game = value; this.settings.opts = {}; if (this.settings.seats !== "auto") this.settings.seats = 0; }
     else if (key === "seats" || key === "level" || key === "timer") this.settings[key] = value;
     else if (key.startsWith("opt.")) this.settings.opts[key.slice(4)] = value;
     this.fixSettings();
-    LS.put("room", this.settings);
+    const { seats, ...pref } = this.settings;
+    LS.put("room", pref);
     this.lobby();
   }
   start() {
     if (this.runner && !this.runner.finished) return;
-    this.fixSettings();
-    const E = this.engine, st = this.settings;
-    const humans = this.humans().filter(p => p.local || p.online);
+    const E = this.engine;
+    const humans = this.nextHumans().map(h => ({ name: h.name, token: h.token, kind: "human", conn: h.conn, local: !!h.local, online: h.local ? true : !!h.online }));
     if (humans.length > E.players.max) { toast(L(`이 게임은 최대 ${E.players.max}명입니다`, `This game allows at most ${E.players.max} players`)); return; }
-    const n = Math.max(st.seats, humans.length, E.players.min);
+    this.waiting = [];
+    this.fixSettings();
+    const n = this.seatsFor(humans.length);
     const taken = new Set(humans.map(h => h.name));
     const pool = AI_NAMES.map(x => x[0]).filter(x => !taken.has(x)).sort(() => Math.random() - .5);
-    this.players = humans.slice();
+    this.players = humans;
     for (let i = 0; this.players.length < n; i++) this.players.push({ name: pool[i] || `AI ${i + 1}`, kind: "ai", online: true });
     if (this.runner) this.runner.stop();
-    this.runner = new Runner(this, E, st);
+    this.runner = new Runner(this, E, this.settings);
     this.runner.run();
   }
   backToLobby() {
     if (this.runner) this.runner.stop();
     this.runner = null;
-    this.players = this.players.filter(p => p.kind === "human" && (p.local || p.online));
+    const merged = this.nextHumans().map(h => ({ name: h.name, token: h.token, kind: "human", conn: h.conn, local: !!h.local, online: h.local ? true : !!h.online }));
+    this.players = merged;
+    this.waiting = [];
     this.fixSettings();
     this.lobby();
+  }
+  /* The host ends the room on purpose: tell everyone and forget the saved room */
+  close() {
+    const msg = { t: "closed" };
+    for (const pl of this.humans()) if (!pl.local) this.deliver(pl, msg);
+    for (const w of this.waiting) try { if (w.conn) w.conn.send(msg); } catch (e) { }
+    this.stop();
+    this.runner = null;
+    forgetSavedRoom();
   }
 }
 
 /* One game: pending → (ask the person | AI) → apply → send each person their view */
 class Runner {
-  constructor(room, engine, settings) {
+  constructor(room, engine, settings, restore) {
     this.room = room; this.E = engine; this.settings = JSON.parse(JSON.stringify(settings));
-    const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
-    this.S = engine.setup({ n: room.players.length, seed, settings: this.settings.opts });
-    this.seq = 0; this.askSeq = 0; this.asks = new Map(); this.alive = true; this.finished = false;
+    if (restore) {
+      this.S = restore.S; this.seq = restore.seq || 0; this.runId = restore.runId;
+    } else {
+      const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+      this.S = engine.setup({ n: room.players.length, seed, settings: this.settings.opts });
+      this.seq = 0;
+      this.runId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);   // lets clients redraw on "play again"
+    }
+    this.askSeq = 0; this.asks = new Map(); this.alive = true; this.finished = false;
     this.kick = null; this.outbox = [];
-    this.runId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);   // lets clients redraw on "play again"
   }
   stop() { this.alive = false; for (const a of this.asks.values()) a.cancel(); this.asks.clear(); if (this.kick) this.kick({ kick: true }); }
 
-  /* Presence changed: rebuild that person's question (human ↔ AI stand-in) */
+  /* Presence changed: rebuild that person's question (human ↔ grace wait ↔ AI stand-in) */
   presence(p, text) {
     const a = this.asks.get(p);
     if (a) { a.cancel(); this.asks.delete(p); }
-    this.outbox.push({ type: "notice", text });
+    if (text) this.outbox.push({ type: "notice", text });
     if (this.finished) this.broadcast();
     if (this.kick) this.kick({ kick: true });
   }
@@ -191,11 +332,18 @@ class Runner {
     const id = ++this.askSeq, pl = this.room.players[x.p];
     let resolve;
     const promise = new Promise(r => { resolve = r; });
-    const ask = { id, p: x.p, kind: x.kind, secret: !!x.secret, promise, deadline: 0, total: 0, human: false, cancelled: false };
+    const ask = { id, p: x.p, kind: x.kind, secret: !!x.secret, promise, deadline: 0, total: 0, human: false, away: false, cancelled: false };
     ask.resolve = v => { if (!ask.cancelled) { ask.cancelled = true; resolve(v); } };
     ask.cancel = () => { ask.cancelled = true; };
     const level = this.settings.level;
-    if (pl.kind === "human" && pl.online) {
+    const aiMove = () => {
+      if (ask.cancelled) return;
+      let a;
+      try { a = this.E.ai(this.S, x.p, { level, rng: Math.random }); }
+      catch (e) { console.error(e); a = this.E.timeout(this.S, x.p, x.kind); }
+      ask.resolve({ p: x.p, id, action: a, ai: true });
+    };
+    if (pl.kind === "human" && (pl.online || pl.local)) {
       ask.human = true;
       const sec = x.time !== undefined ? x.time : this.settings.timer;
       if (sec) {
@@ -209,13 +357,10 @@ class Runner {
       }
     } else {
       const think = x.think !== undefined ? x.think : (this.E.thinkTime ? this.E.thinkTime(this.S, x.p, x.kind) : 700 + Math.random() * 700);
-      hostSleep(think).then(() => {
-        if (ask.cancelled) return;
-        let a;
-        try { a = this.E.ai(this.S, x.p, { level, rng: Math.random }); }
-        catch (e) { console.error(e); a = this.E.timeout(this.S, x.p, x.kind); }
-        ask.resolve({ p: x.p, id, action: a, ai: true });
-      });
+      // A disconnected human keeps the seat for a grace period before the AI plays for them
+      const grace = pl.kind === "human" ? Math.max(0, (pl.graceUntil || 0) - Date.now()) : 0;
+      if (grace) { ask.away = true; ask.deadline = Date.now() + grace; ask.total = grace; }
+      hostSleep(grace + think).then(aiMove);
     }
     return ask;
   }
@@ -231,15 +376,18 @@ class Runner {
     this.seq++;
     const over = this.E.over(this.S);
     const results = over ? this.E.results(this.S) : null;
-    const asks = [...this.asks.values()].map(a => ({ p: a.p, kind: a.kind, id: a.id, secret: a.secret, total: a.total, ms: a.deadline ? Math.max(0, a.deadline - Date.now()) : 0 }));
+    const asks = [...this.asks.values()].map(a => ({ p: a.p, kind: a.kind, id: a.id, secret: a.secret, away: a.away, total: a.total, ms: a.deadline ? Math.max(0, a.deadline - Date.now()) : 0 }));
     const players = this.room.publicPlayers();
+    const waiting = this.room.waiting.map(w => w.name);
     this.room.players.forEach((pl, p) => {
       if (pl.kind !== "human") return;
       const v = this.E.view(this.S, p);
       const ev = evs.map(e => (this.E.filterEvent ? this.E.filterEvent(e, p, this.S) : e)).filter(Boolean);
       const pending = asks.filter(a => !a.secret || a.p === p).map(({ secret, ...a }) => a);
-      this.room.sendTo(p, { t: "state", run: this.runId, seq: this.seq, game: this.E.id, me: p, v, ev, pending, players, settings: this.settings, over, results });
+      this.room.sendTo(p, { t: "state", run: this.runId, seq: this.seq, game: this.E.id, me: p, v, ev, pending, players, waiting, settings: this.settings, over, results });
     });
+    if (over) for (const w of this.room.waiting) if (w.conn) this.room.sendWait(w);
+    this.room.save();
   }
 
   async run() {
