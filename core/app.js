@@ -1,7 +1,7 @@
 /* App shell — home, lobby, game screen, results. Each game draws its own area via games/<id>/ui.js. */
 import { GAMES, gameById } from "../games/registry.js";
 import { Room, cleanName, aiName, savedRoom, forgetSavedRoom } from "./host.js";
-import { net, token, hostRoom, joinRoom, Rejoin, sendConn, sendToHost, leaveNet, shareLink, Awake, lastRoom, forgetRoom, hostingHere } from "./net.js";
+import { net, token, hostRoom, joinRoom, Rejoin, sendConn, sendToHost, leaveNet, shareLink, Awake, lastRoom, forgetRoom, hostingHere, netLog } from "./net.js";
 import {
   $, el, esc, prefs, savePrefs, sound, buzz, toast, modal, closeAllModals, head, buttonRow, choose, avatarHTML, avatarColor
 } from "./ui.js";
@@ -170,6 +170,17 @@ function showRules(E) {
 }
 
 $("bCreate").onclick = () => { if (needName()) hostRoom(); };
+/* Connection log, to see (or send) why joining failed */
+$("bNetLog").onclick = () => modal((box, close) => {
+  const text = netLog().join("\n");
+  head(box, L("연결 기록", "Connection log"), L("최근 연결 시도", "Recent connection attempts"),
+    L("들어가기가 안 될 때 이 내용을 복사해서 보내 주면 원인을 찾을 수 있습니다.", "If joining fails, copy this and send it so the cause can be found."));
+  box.appendChild(el("pre", "netlog", esc(text || L("기록이 없습니다", "Nothing yet"))));
+  buttonRow(box, [{ label: L("닫기", "Close"), on: () => close() },
+                  { label: L("복사", "Copy"), primary: true, on: async () => {
+                    try { await navigator.clipboard.writeText(text); toast(L("복사했습니다", "Copied")); }
+                    catch (e) { prompt(L("이 내용을 복사하세요", "Copy this"), text); } } }]);
+});
 $("bSolo").onclick = () => {
   if (!needName()) return;
   net.role = "local";

@@ -37,6 +37,68 @@ export function hostingHere(code) { try { return sessionStorage.getItem("bg.host
 
 function makeCode() { let s = ""; for (let i = 0; i < 5; i++) s += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]; return s; }
 export const shareLink = code => location.href.split("#")[0] + "#" + code;
+/* ICE servers. PeerJS's built-in TURN relays (eu-0/us-0.turn.peerjs.com) no longer exist, so without a relay of our own
+   two devices only connect when their networks allow a direct path - often not the case on mobile data or company /
+   school Wi-Fi. TURN_URL: a credentials URL from metered.ca ("https://<app>.metered.live/api/v1/turn/credentials?apiKey=...")
+   that returns an iceServers list; empty = STUN only. */
+const TURN_URL = "";
+const STUN = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"] },
+              { urls: "stun:stun.cloudflare.com:3478" }];
+let iceList = null;
+async function iceServers() {
+  if (iceList) return iceList;
+  if (!TURN_URL) return (iceList = STUN);
+  const cached = LS.json("ice", null);
+  if (cached && cached.url === TURN_URL && Date.now() - cached.at < 6 * 3600 * 1000) return (iceList = cached.list);
+  try {
+    const ctl = new AbortController(); setTimeout(() => ctl.abort(), 5000);
+    const list = await (await fetch(TURN_URL, { signal: ctl.signal })).json();
+    if (Array.isArray(list) && list.length) {
+      iceList = [...STUN, ...list];
+      LS.put("ice", { url: TURN_URL, at: Date.now(), list: iceList });
+      return iceList;
+    }
+  } catch (e) { nlog("relay: couldn't get TURN credentials (" + (e.name || e) + ")"); }
+  return STUN;
+}
+const hasRelay = list => list.some(s => [].concat(s.urls).some(u => /^turns?:/.test(u)));
+const peerOptions = ice => ({ debug: 0, config: { iceServers: ice } });
+
+/* Connection log: what happened while connecting, kept across reloads so a failed attempt can be looked at
+   (home screen -> "Connection log"). */
+export function nlog(text) {
+  const log = LS.json("netlog", []);          // re-read: other tabs of this browser may have written since
+  log.push(new Date().toTimeString().slice(0, 8) + " " + text);
+  LS.put("netlog", log.slice(-200));
+}
+export const netLog = () => LS.json("netlog", []);
+function device() {
+  const c = navigator.connection;
+  return (c ? `${c.type || "?"}/${c.effectiveType || "?"} · ` : "") + navigator.userAgent.replace(/^Mozilla\/5\.0 /, "").slice(0, 140);
+}
+/* Log a WebRTC connection's progress: my address types, ICE states, and the path that was used (direct or relay). */
+function watchPc(conn, who, onState) {
+  const pc = conn.peerConnection;
+  if (!pc) { nlog(who + ": no peer connection"); return; }
+  const mine = new Set();
+  pc.addEventListener("icecandidate", e => {
+    if (e.candidate && e.candidate.candidate) mine.add(e.candidate.candidate.split(" ")[7]);
+    else nlog(`${who}: my addresses ${[...mine].join(", ") || "none"}`);
+  });
+  pc.addEventListener("iceconnectionstatechange", () => {
+    const st = pc.iceConnectionState;
+    nlog(`${who}: ice ${st}`);
+    if (onState) onState(st);
+    if (st === "connected") pc.getStats().then(stats => {
+      let pair = null;
+      stats.forEach(r => { if (r.type === "transport" && r.selectedCandidatePairId) pair = stats.get(r.selectedCandidatePairId); });
+      if (!pair) stats.forEach(r => { if (r.type === "candidate-pair" && r.state === "succeeded" && r.nominated) pair = r; });
+      const l = pair && stats.get(pair.localCandidateId), r = pair && stats.get(pair.remoteCandidateId);
+      if (l && r) nlog(`${who}: path ${l.candidateType} <-> ${r.candidateType} (${l.candidateType === "relay" || r.candidateType === "relay" ? "relay" : "direct"})`);
+    }).catch(() => { });
+  });
+}
+
 export function peerOK() {
   if (typeof window.Peer === "function") return true;
   net.on.entryError(tx("연결 모듈을 불러오지 못했습니다. 인터넷 연결을 확인하고 새로고침하세요.", "Couldn't load the connection module. Check your internet connection and reload."));
@@ -45,12 +107,15 @@ export function peerOK() {
 
 /* reopen: the code of a saved room. Its id may still be held by the signalling server for a minute after the old page
    closed, so keep retrying instead of picking a new code. */
-export function hostRoom(reopen, tries = 0) {
+export async function hostRoom(reopen, tries = 0) {
   if (!peerOK()) return;
   net.on.busy(true);
   const code = reopen || makeCode();
-  const peer = new Peer(PREFIX + code, { debug: 0 });
+  const ice = await iceServers();
+  if (!tries) nlog(`host: ${reopen ? "reopen" : "create"} ${code} · relay ${hasRelay(ice) ? "on" : "off"} · ${device()}`);
+  const peer = new Peer(PREFIX + code, peerOptions(ice));
   peer.on("open", () => {
+    nlog("host: room open " + code);
     net.peer = peer; net.role = "host"; net.code = code;
     history.replaceState(null, "", "#" + code);
     stickyToast(null);
@@ -59,9 +124,17 @@ export function hostRoom(reopen, tries = 0) {
     net.on.busy(false);
     net.on.hostReady(code, !!reopen);
   });
-  peer.on("connection", conn => net.on.connection(conn));
-  peer.on("disconnected", () => { try { peer.reconnect(); } catch (e) { } });
+  peer.on("connection", conn => {
+    const who = "guest " + String(conn.peer).slice(0, 6);
+    nlog(who + ": knocking");
+    watchPc(conn, who);
+    conn.on("open", () => nlog(who + ": connected"));
+    conn.on("close", () => nlog(who + ": closed"));
+    net.on.connection(conn);
+  });
+  peer.on("disconnected", () => { nlog("host: lost the signalling server, reconnecting"); try { peer.reconnect(); } catch (e) { } });
   peer.on("error", err => {
+    nlog("host: error " + (err.type || err.message));
     if (err.type === "unavailable-id") {
       peer.destroy();
       if (!reopen) return hostRoom(null);
@@ -81,13 +154,15 @@ export function hostRoom(reopen, tries = 0) {
 
 /* quiet: a silent reconnection attempt after a drop.
    onMissing: called instead of showing an error when nobody is hosting the room (used to reopen my own saved room). */
-export function joinRoom(code, quiet, name, onMissing) {
+export async function joinRoom(code, quiet, name, onMissing) {
   if (!peerOK()) return;
   code = String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (code.length !== 5) { net.on.entryError(tx("방 코드는 다섯 글자입니다.", "Room codes have five characters.")); return; }
   if (!quiet) net.on.busy(true);
   if (name) net.name = name;
-  const peer = new Peer(undefined, { debug: 0 });
+  const ice = await iceServers(), relay = hasRelay(ice);
+  nlog(`guest: ${quiet ? "rejoin" : "join"} ${code} · relay ${relay ? "on" : "off"}${quiet ? "" : " · " + device()}`);
+  const peer = new Peer(undefined, peerOptions(ice));
   let opened = false, failed = false;
   const fail = (text, missing) => {
     if (opened || failed) return;
@@ -97,13 +172,29 @@ export function joinRoom(code, quiet, name, onMissing) {
     else if (missing && onMissing) { net.peer = null; net.role = null; net.hostConn = null; onMissing(); }
     else { net.on.busy(false); net.on.entryError(text); }
   };
+  /* Why it failed decides the message: the host never answered (screen off, app in the background) vs. the answer came
+     but no network path worked (needs a relay). */
+  const noAnswer = tx("방장의 화면이 응답하지 않습니다. 방장이 게임 화면을 켜 두었는지 확인하고 다시 눌러 주세요.",
+                      "The host's screen isn't responding. Make sure the host has the game open on screen, then try again.");
+  const blocked = relay
+    ? tx("방장 기기와 연결하지 못했습니다. 잠시 뒤 다시 눌러 주세요.", "Couldn't connect to the host's device. Try again in a moment.")
+    : tx("방장 기기와 직접 연결이 막혔습니다. 모바일 데이터나 회사·학교 와이파이에서 자주 생깁니다. 다른 와이파이로 바꾸거나 (또는 와이파이를 끄고) 다시 눌러 주세요.",
+         "The direct connection to the host's device is blocked. This is common on mobile data or company / school Wi-Fi. Switch to another Wi-Fi (or turn Wi-Fi off) and try again.");
   peer.on("open", () => {
+    nlog("guest: signalling server ok, asking the host");
     const conn = peer.connect(PREFIX + code, { reliable: true, serialization: "json" });
     if (net.peer && net.peer !== peer) try { net.peer.destroy(); } catch (e) { }
     net.peer = peer; net.role = "guest"; net.code = code; net.hostConn = conn;
-    setTimeout(() => fail(tx("방에 연결하지 못했습니다. 방장이 방을 열어 두었는지, 코드가 맞는지 확인하세요.", "Couldn't connect to the room. Check the code and that the host still has the room open."), true), quiet ? 8000 : 15000);
+    watchPc(conn, "guest", st => { if (st === "failed") { nlog("guest: no network path to the host"); fail(blocked); } });
+    setTimeout(() => {
+      if (opened || failed) return;
+      const pc = conn.peerConnection, answered = !!pc && pc.signalingState !== "have-local-offer";
+      nlog(`guest: gave up (${answered ? "host answered, ice " + pc.iceConnectionState : "no answer from the host"})`);
+      fail(answered ? blocked : noAnswer, !answered);
+    }, quiet ? 8000 : 15000);
     conn.on("open", () => {
       if (failed) return;
+      nlog("guest: connected to " + code);
       opened = true; net.joined = true; net.seen = Date.now();
       Rejoin.done();
       net.on.busy(false);
@@ -122,6 +213,7 @@ export function joinRoom(code, quiet, name, onMissing) {
   });
   peer.on("disconnected", () => { if (opened) try { peer.reconnect(); } catch (e) { } });
   peer.on("error", err => {
+    nlog("guest: error " + (err.type || err.message));
     if (err.type === "peer-unavailable") return fail(tx(`${code} 방을 찾지 못했습니다. 코드를 확인하거나, 방장이 방을 열어 두었는지 확인하세요.`, `Room ${code} not found. Check the code, or make sure the host still has the room open.`), true);
     if (opened) return;
     fail(tx("연결 오류: " + (err.type || err.message), "Connection error: " + (err.type || err.message)));

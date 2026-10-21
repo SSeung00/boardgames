@@ -212,3 +212,7 @@ html[lang="en"] .logo{font-size:38px; letter-spacing:.02em}
 .resume-x{width:44px; border-radius:13px; border:1px solid var(--line); background:rgba(255,255,255,.04); color:var(--muted)}
 .tag.away{color:#ff9b8f; border-color:rgba(255,155,143,.5)}
 .plist li.away{opacity:.7}
+
+/* ---------- Connection log ---------- */
+pre.netlog{max-height:50vh; overflow:auto; margin:10px 0 0; padding:10px; border-radius:10px; background:rgba(0,0,0,.35);
+  border:1px solid var(--line); font:11.5px/1.45 ui-monospace,Menlo,Consolas,monospace; color:var(--ink); white-space:pre-wrap; word-break:break-all}
