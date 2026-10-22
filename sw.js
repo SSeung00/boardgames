@@ -1,17 +1,67 @@
 /* Offline copy of the site. Network first: when online every file is fetched fresh (so a new version never mixes with old
-   files); the copy is only used without a connection, e.g. to play solo offline. Online rooms still need the internet. */
-const CACHE = "bg-site-v1";
+   files); the copy is only used without a connection, e.g. to play solo offline. Online rooms still need the internet.
+   deploy.py rewrites FILES (every published file) and CACHE (a hash of their contents) in the published copy. */
+const CACHE = "bg-site-9810cf7017";
 const FILES = [
-  "./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-180.png",
-  "core/app.js", "core/cards.js", "core/host.js", "core/i18n.js", "core/net.js", "core/rng.js", "core/settings.js", "core/social.js",
-  "core/style.css", "core/ui.js", "games/registry.js",
-  "games/dalmuti/ai.js", "games/dalmuti/engine.js", "games/dalmuti/policy.js", "games/dalmuti/rules.js", "games/dalmuti/style.css", "games/dalmuti/ui.js",
-  "games/gems/engine.js", "games/gems/style.css", "games/gems/ui.js",
-  "games/gostop/cards.js", "games/gostop/engine.js", "games/gostop/style.css", "games/gostop/ui.js",
-  "games/mine/engine.js", "games/mine/style.css", "games/mine/ui.js",
-  "games/oldmaid/engine.js", "games/oldmaid/style.css", "games/oldmaid/ui.js",
-  "games/onecard/engine.js", "games/onecard/style.css", "games/onecard/ui.js",
-  "games/poker/engine.js", "games/poker/style.css", "games/poker/ui.js"
+  "./",
+  "core/app.js",
+  "core/cards.js",
+  "core/host.js",
+  "core/i18n.js",
+  "core/net.js",
+  "core/replay.js",
+  "core/rng.js",
+  "core/settings.js",
+  "core/social.js",
+  "core/style.css",
+  "core/ui.js",
+  "games/codebreak/engine.js",
+  "games/codebreak/logic.js",
+  "games/codebreak/style.css",
+  "games/codebreak/ui.js",
+  "games/dalmuti/ai.js",
+  "games/dalmuti/cards.js",
+  "games/dalmuti/engine.js",
+  "games/dalmuti/policy.js",
+  "games/dalmuti/rules.js",
+  "games/dalmuti/style.css",
+  "games/dalmuti/ui.js",
+  "games/gems/engine.js",
+  "games/gems/style.css",
+  "games/gems/ui.js",
+  "games/gostop/cards.js",
+  "games/gostop/engine.js",
+  "games/gostop/style.css",
+  "games/gostop/ui.js",
+  "games/liar/engine.js",
+  "games/liar/style.css",
+  "games/liar/ui.js",
+  "games/liar/words.js",
+  "games/liardice/engine.js",
+  "games/liardice/style.css",
+  "games/liardice/ui.js",
+  "games/mine/engine.js",
+  "games/mine/style.css",
+  "games/mine/ui.js",
+  "games/oldmaid/engine.js",
+  "games/oldmaid/style.css",
+  "games/oldmaid/ui.js",
+  "games/onecard/engine.js",
+  "games/onecard/style.css",
+  "games/onecard/ui.js",
+  "games/poker/engine.js",
+  "games/poker/style.css",
+  "games/poker/ui.js",
+  "games/registry.js",
+  "games/yacht/engine.js",
+  "games/yacht/style.css",
+  "games/yacht/ui.js",
+  "icon-180.png",
+  "icon-192.png",
+  "icon-512.png",
+  "index.html",
+  "manifest.webmanifest",
+  "og.png"
 ];
 const CDN = /^(cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com)$/;
 
@@ -30,7 +80,7 @@ self.addEventListener("fetch", e => {
   e.respondWith(
     fetch(req, same ? { cache: "no-cache" } : undefined)
       .then(res => {
-        if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }
+        if (res.ok || res.type === "opaque") { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }
         return res;
       })
       .catch(() => caches.match(req, { ignoreSearch: true })

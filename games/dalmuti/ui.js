@@ -4,13 +4,17 @@
                   (cleared when the trick ends — fair-play rule). Seat draw, tax and round results are shown in the same spot.
    Bottom: one line with my title · score · rank / hint / my hand grouped by number / [Pass] · chosen set (adjust count) · [Play]
    The revolution question and choosing cards to give back open as dialogs for that player only.
-   Sizes are derived from the measured screen height (no dead space). */
+   Sizes are derived from the measured screen height (no dead space).
+   Landscape (phones held sideways, computers, TVs): name chips in a column on the left, the table in the middle,
+   my line · hint · hand · buttons in a column on the right.
+   Spectators (me = -1: watching screens, people waiting, the public replay view): no dock — the table takes the space.
+   Replays: nothing prompts (no dialogs, no buttons, no "your turn"). */
 import { L } from "../../core/i18n.js";
+import { JESTER, cardName, RANK_COLOR, GLYPH, dmCardHTML } from "./cards.js";
 
-const JESTER = 13;
-const CARD_KO = ["달무티", "대주교", "남작부인", "수녀원장", "기사", "재봉사", "석공", "요리사", "양치기", "채석공", "소작농", "농노"];
-const CARD_EN = ["Dalmuti", "Archbishop", "Baroness", "Abbess", "Knight", "Seamstress", "Mason", "Cook", "Shepherdess", "Stonecutter", "Peasant", "Serf"];
-const cardName = r => r === JESTER ? L("광대", "Jester") : L(CARD_KO[r - 1], CARD_EN[r - 1]);
+/* Same query as the shell's landscape rules (games/README.md) */
+const LAND_Q = "(orientation: landscape) and (min-aspect-ratio: 4/3)";
+
 const TITLE_KO = ["평민", "대달무티", "소달무티", "상인", "소농노", "대농노"];
 const TITLE_EN = ["Commoner", "Greater Dalmuti", "Lesser Dalmuti", "Merchant", "Lesser Peon", "Greater Peon"];
 const titleName = t => L(TITLE_KO[t], TITLE_EN[t]);
@@ -21,25 +25,6 @@ const titleShort = t => L(SHORT_KO[t], SHORT_EN[t]);
 const CODE_EN = ["", "GD", "LD", "M", "LP", "GP"];
 const titleCode2 = t => L(SHORT_KO[t], CODE_EN[t]);
 const TITLE_COLOR = ["#a39784", "#e2bd68", "#c3ccd8", "#9cc39a", "#c48c68", "#b5525c"];
-const RANK_COLOR = {
-  1: "#7d1128", 2: "#5b3a8c", 3: "#a8325e", 4: "#2a6a86", 5: "#33506e", 6: "#1c6f55",
-  7: "#6b6257", 8: "#a9591f", 9: "#6f8a33", 10: "#4c5a66", 11: "#8a7320", 12: "#55663a", 13: "#9d1040"
-};
-const GLYPH = {
-  1: '<path d="M4 8l3.6 3.6L12 4l4.4 7.6L20 8l-1.7 9H5.7z"/><rect x="5.4" y="18.2" width="13.2" height="2.4" rx=".7"/>',
-  2: '<path d="M12 3c2.6 3.3 4.2 6.9 4.2 10.5V20H7.8v-6.5C7.8 9.9 9.4 6.3 12 3z"/>',
-  3: '<path d="M12 3c1.6 1.4 2.4 3 2.4 4.6 0 1.5-.8 2.6-2.4 4-1.6-1.4-2.4-2.5-2.4-4C9.6 6 10.4 4.4 12 3z"/><path d="M12 11.6c2.6-2.4 5.4-1.6 5.4 1.2 0 1.8-1.8 3-5.4 3s-5.4-1.2-5.4-3c0-2.8 2.8-3.6 5.4-1.2z"/><rect x="11" y="15.6" width="2" height="5" rx=".6"/>',
-  4: '<path d="M7 4h10v2.6a5 5 0 0 1-4 4.9V17h3.2v3H7.8v-3H11v-5.5a5 5 0 0 1-4-4.9z"/>',
-  5: '<path d="M11 3h2v10.6h-2z"/><path d="M7.4 13.6h9.2v2H7.4z"/><path d="M11 15.6h2v4.2h-2z"/><circle cx="12" cy="20.6" r="1.4"/>',
-  6: '<rect x="7.8" y="3.6" width="8.4" height="2.2" rx=".7"/><rect x="9.6" y="5.8" width="4.8" height="12.4" rx=".6"/><rect x="7.8" y="18.2" width="8.4" height="2.2" rx=".7"/>',
-  7: '<rect x="3" y="5" width="18" height="4.2" rx=".6"/><rect x="3" y="10" width="8.4" height="4.2" rx=".6"/><rect x="12.6" y="10" width="8.4" height="4.2" rx=".6"/><rect x="3" y="15" width="18" height="4.2" rx=".6"/>',
-  8: '<path d="M4 9.2h16v5.3A5.5 5.5 0 0 1 14.5 20h-5A5.5 5.5 0 0 1 4 14.5z"/><rect x="3" y="6.6" width="18" height="2.1" rx=".8"/><rect x="11" y="3.6" width="2" height="2.9" rx=".8"/>',
-  9: '<path d="M11 21V9.6a4.6 4.6 0 0 1 9.2 0v1.2" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>',
-  10: '<path d="M2.8 9.6c6-4.4 12.6-4.4 18.4 0" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><rect x="11" y="6" width="2" height="15" rx=".8"/>',
-  11: '<rect x="11.2" y="10" width="1.6" height="11" rx=".6"/><path d="M12 3.4c1.8 1.4 2.4 3.2 0 5.4-2.4-2.2-1.8-4 0-5.4z"/><path d="M8.2 7.2c2.2.6 3 2.2 2 4.8-2.4-.8-3-2.6-2-4.8z"/><path d="M15.8 7.2c1 2.2.4 4-2 4.8-1-2.6-.2-4.2 2-4.8z"/>',
-  12: '<rect x="11" y="3" width="2" height="9" rx=".7"/><path d="M7.5 12h9v3.2c0 3-1.9 5.4-4.5 5.8-2.6-.4-4.5-2.8-4.5-5.8z"/>',
-  13: '<path d="M12 6.6c-3.4 0-6.4 2.4-7.4 6.2L3.3 18l3.5-1.2L12 19l5.2-2.2 3.5 1.2-1.3-5.2c-1-3.8-4-6.2-7.4-6.2z"/><circle cx="3" cy="18.8" r="1.5"/><circle cx="21" cy="18.8" r="1.5"/><circle cx="12" cy="4.6" r="1.5"/>'
-};
 const CREST = { 0: GLYPH[11], 1: GLYPH[1], 2: GLYPH[2], 3: GLYPH[8], 4: GLYPH[11], 5: GLYPH[12] };
 /* Title code (same as titleCode in rules.js) */
 function titleCode(i, n) {
@@ -68,6 +53,7 @@ export function mount(root, ctx) {
       <div class="dm-center" data-r="center"></div>
       <div class="dm-log" data-r="log"></div>
       <div class="dm-banner" data-r="banner" hidden></div>
+      <div class="dm-passfx" data-r="passfx" hidden></div>
     </div>
     <div class="dock dm-dock" data-r="dock">
       <button class="dm-me" data-r="me" aria-label="${L("점수표 보기", "Show scores")}"></button>
@@ -87,16 +73,25 @@ export function mount(root, ctx) {
   let selAsk = 0;               // ask id the set was chosen for (cleared when the turn changes)
   let busyAsk = 0, busyUntil = 0, busyT = 0;
   let flashText = "", flashT = 0;
-  let hot = new Set();          // players who just acted — their name chips flash
+  let hot = new Set();          // players who just played — their name chips flash gold
+  let hotPass = new Set();      // players who just passed — their chips give a small grey nod instead
+  let passT = 0;
   let dealIn = false;           // cards were just dealt — hand entry animation
   let modalAsk = 0, modalClose = null, modalKind = "";
   let bannerT = 0, callText = "", callKind = "";   // callKind "trick": message to clear on the next play
   let geo = { cw: 52, rows: 1 };
   let landed = "";              // last trick whose landing animation was shown — not repeated on re-render
+  let flyNow = false;           // this update flies the played cards in (instead of the landing animation)
+  let sentFrom = null;          // where my last play left my hand {at, r: DOMRect, j: DOMRect} — start of its flight
+  let evSeen = null;            // events already handled (update may be called again with the same msg)
+  const landMQ = typeof matchMedia === "function" ? matchMedia(LAND_Q) : { matches: false };
 
   const names = () => (M ? M.players.map(p => p.name) : []);
   const nm = p => esc(names()[p] || "?");
   const myPlayAsk = () => (M && M.v.phase === "play" ? ctx.myAsk("play") : null);
+  const watching = () => !!M && M.me < 0;                 // spectator: nothing to act on
+  const replaying = () => !!(M && M.replay) || !!ctx.replay;
+  const land = () => landMQ.matches;
   const busy = () => { const a = ctx.myAsk(); return !!a && a.id === busyAsk && Date.now() < busyUntil; };
   function markBusy() {
     const a = ctx.myAsk();
@@ -105,13 +100,7 @@ export function mount(root, ctx) {
   }
 
   /* ---------- Drawing cards ---------- */
-  function cardHTML(r, cls = "") {
-    const j = r === JESTER, name = j ? L("와일드", "Wild") : cardName(r);
-    const en = ctx.lang === "en" ? " en" : "";
-    return `<span class="dm-card${j ? " jk" : ""}${en} ${cls}" style="--rc:${RANK_COLOR[r]}"><span class="band"></span>` +
-      `<span class="cn">${j ? "J" : r}</span><svg class="gl" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${GLYPH[r]}</svg>` +
-      `<span class="rk">${j ? L("광대", "Jester") : r}</span><span class="tt${name.length > 8 ? " lg" : ""}">${name}</span></span>`;
-  }
+  const cardHTML = (r, cls = "") => dmCardHTML(r, cls);
   const pip = r => `<i class="dm-pip" style="--rc:${RANK_COLOR[r]}">${r === JESTER ? "J" : r}</i>`;
   function pips(rank, plain, jesters, max = 4) {
     let s = "";
@@ -197,23 +186,36 @@ export function mount(root, ctx) {
       else if (v.phase === "roundEnd" || v.phase === "over") act = place >= 0 ? `<span class="dm-place">${placeL(place + 1)} +${v.n - place}</span>` : "";
       else if (place >= 0) act = `<span class="dm-place">${placeL(place + 1)} ✓</span>`;
       else if (turn) act = `<span class="dm-think">${L("고민 중", "Thinking")}<b>…</b></span>`;
-      else if (la && la.pass && v.passed[p]) act = `<span class="dm-passed">${L("패스", "Pass")}</span>`;
+      else if (la && la.pass && v.passed[p]) act = `<span class="dm-passed">${v.passLock ? L("패스 · 이번 판 끝", "Passed · out") : L("패스", "Pass")}</span>`;
       else if (la && !la.pass) act = pips(la.rank, la.count - la.jesters, la.jesters, 3);
       else if (v.phase === "tax" && v.tax) {
         const x = v.tax.pairs.find(q => q.peon === p || q.lord === p);
         if (x) act = `<span class="dm-taxm">${x.peon === p ? L(`상납 ${x.k}`, `Pays ${x.k}`) : L(`받음 ${x.k}`, `Gets ${x.k}`)}</span>`;
       }
-      const chip = el("div", "dm-seat" + (turn ? " turn" : "") + (p === M.me ? " me" : "") + (out ? " out" : "") + (hot.has(p) ? " hot" : ""));
+      const sat = v.passLock && v.phase === "play" && v.trick && v.passed[p] && !out;     // pass lock: sits out this trick
+      const chip = el("div", "dm-seat" + (turn ? " turn" : "") + (p === M.me ? " me" : "") + (out ? " out" : "") + (sat ? " sat" : "") +
+        (hot.has(p) ? " hot" : "") + (hotPass.has(p) ? " hotpass" : ""));
       chip.style.setProperty("--tc", TITLE_COLOR[t]);
       const tag = pl.kind === "ai" ? '<span class="dm-tag">AI</span>' : pl.kind === "away" ? `<span class="dm-tag away">${L("비움", "Away")}</span>` : "";
       const rev = v.reveal && v.reveal.p === p ? `<span class="dm-tag rev">${L("광대2", "J×2")}</span>` : "";
       chip.innerHTML =
         `<div class="l1">${crest(t)}<span class="nm">${esc(pl.name)}</span><span class="cnt" title="${L("남은 카드", "Cards left")}">${v.sizes[p]}</span></div>` +
-        `<div class="l2"><span class="ti"><span class="tn">${titleShort(t)}</span>${tag}${rev}</span><span class="sc">${L(`${v.scores[p]}점`, `${v.scores[p]}pt`)}</span></div>` +
+        `<div class="l2"><span class="ti"><span class="tn">${titleShort(t)}</span><span class="tf">${titleName(t)}</span>${tag}${rev}</span><span class="sc">${L(`${v.scores[p]}점`, `${v.scores[p]}pt`)}</span></div>` +
         `<div class="l3">${act}</div>`;
       chip.setAttribute("aria-label", L(`${pl.name} ${titleName(t)}, 카드 ${v.sizes[p]}장, ${v.scores[p]}점`,
         `${pl.name}, ${titleName(t)}, ${cardsEn(v.sizes[p])}, ${v.scores[p]} points`));
+      chip.dataset.p = p;
       box.appendChild(chip);
+    }
+    // Landscape: one column of full chips; if they don't fit the height, compact two-line chips,
+    // then two columns of full chips, then two columns of compact chips
+    box.classList.remove("cmp", "two");
+    box.style.setProperty("--scols", 1);
+    if (land()) {
+      const over = () => box.scrollHeight > box.clientHeight + 1;
+      if (over()) box.classList.add("cmp");
+      if (over()) { box.classList.remove("cmp"); box.classList.add("two"); box.style.setProperty("--scols", 2); }
+      if (over()) box.classList.add("cmp");
     }
   }
 
@@ -226,15 +228,20 @@ export function mount(root, ctx) {
     if (v.phase === "roundEnd" || v.phase === "over") return standingsView(c);
     // Play
     const t = v.trick;
+    const mine = v.turn === M.me && !replaying();          // a replay never says "you"
     if (t) {
-      const key = [v.round, t.by, t.rank, t.plain, t.jesters, v.trickLog.length].join(":");
-      const land = key !== landed; landed = key;
+      // only a new play lands the cards again — a pass leaves the table still (it used to replay the drop and look like a play).
+      // Not after a jump / remount (no events), and not when the cards fly in from the player's seat instead.
+      const plays = v.trickLog.filter(e => !e.pass).length;
+      const key = [v.round, t.by, t.rank, t.plain, t.jesters, plays].join(":");
+      const land = key !== landed && M.ev.length > 0 && !flyNow; landed = key;
       c.innerHTML = `<div class="dm-trick${land ? " land" : ""}" data-r="trick">${trickCards(t)}</div>
         <div class="dm-who">${crest(v.titles[t.by])}<b>${nm(t.by)}</b> · ${esc(playText(t.rank, t.plain, t.jesters))}</div>
-        <div class="dm-need">${v.turn === M.me ? L("받아치려면", "To beat it") : L("받아칠 조건", "To beat")}: ` +
-        L(`<b>${t.count}장</b> · <b>${t.rank}보다 낮은 숫자</b>`, `<b>${cardsEn(t.count)}</b> · <b>lower than ${t.rank}</b>`) + `</div>`;
+        <div class="dm-need">${mine ? L("받아치려면", "To beat it") : L("받아칠 조건", "To beat")}: ` +
+        L(`<b>${t.count}장</b> · <b>${t.rank}보다 낮은 숫자</b>`, `<b>${cardsEn(t.count)}</b> · <b>lower than ${t.rank}</b>`) +
+        (v.passLock ? `<span class="dm-lockrule">${L("패스하면 이번 판 끝", "a pass sits out this trick")}</span>` : "") + `</div>`;
     } else {
-      const pt = v.prevTrick, mine = v.turn === M.me;
+      const pt = v.prevTrick;
       c.innerHTML = (pt ? `<div class="dm-trick prev" data-r="trick">${trickCards(pt)}</div>
           <div class="dm-who">${L(`${nm(pt.by)} 님이 판을 가져갔습니다`, `${nm(pt.by)} won the trick`)}</div>`
         : `<div class="dm-trick empty" data-r="trick"><span>${L("빈 판", "Empty")}</span></div>`) +
@@ -246,28 +253,38 @@ export function mount(root, ctx) {
       lg.innerHTML = `<span class="lab">${L("이번 판", "This trick")}</span>` + v.trickLog.slice(-8).map(e =>
         `<span class="ent${e.p === M.me ? " me" : ""}"><b>${nm(e.p)}</b>${e.pass ? `<i class="ps">${L("패스", "Pass")}</i>` : pips(e.rank, e.plain, e.jesters, 3)}</span>`).join("");
     }
-    sizeTrick();
+    let cw = sizeTrick();
+    // A short table: drop the oldest entries of the record (the newest stay) while the record takes more than one line
+    // and the trick doesn't fit or gets too small
+    for (let k = 0; k < 8 && (c.scrollHeight > c.clientHeight + 1 || cw < 52) && lg.offsetHeight > 26 && lg.children.length > 2; k++) {
+      lg.children[1].remove(); lg.firstChild.classList.add("cut");
+      cw = sizeTrick();
+    }
   }
+  const slotRot = i => ((i % 2 ? 1 : -1) * (1.5 + (i * .9) % 3)).toFixed(1);
   function trickCards(t) {
     const ranks = Array(t.plain).fill(t.rank).concat(Array(t.jesters).fill(JESTER));
-    return ranks.map((r, i) => `<span class="slot" style="--i:${i};--rot:${((i % 2 ? 1 : -1) * (1.5 + (i * .9) % 3)).toFixed(1)}deg">${cardHTML(r)}</span>`).join("");
+    return ranks.map((r, i) => `<span class="slot" data-rank="${r}" style="--i:${i};--rot:${slotRot(i)}deg">${cardHTML(r)}</span>`).join("");
   }
-  /* Trick card size: from the height and width left on the felt */
+  /* Trick card size: from the height and width left on the felt (watchers and big screens get bigger cards) */
   function sizeTrick() {
     const tr = R("table").querySelector('[data-r="trick"]');
-    if (!tr) return;
+    if (!tr) return 999;
     const table = R("table"), c = R("center");
     const others = [...c.children].filter(x => x !== tr).reduce((a, x) => a + x.offsetHeight + 4, 0);
     const avH = table.clientHeight - R("call").offsetHeight - R("log").offsetHeight - others - 22;
     const W = table.clientWidth - 24;
     const k = tr.children.length || 1;
-    let cw = Math.max(40, Math.min(W > 400 ? 128 : 112, avH / 1.42));
+    const big = wrap.classList.contains("big");
+    const cap = watching() ? (W > 700 ? 230 : W > 400 ? 170 : 150) : big ? 160 : W > 400 ? 128 : 112;
+    let cw = Math.max(40, Math.min(cap, avH / 1.42, W));
     // Overlap: tighten the spacing when too wide
     let step = k > 1 ? Math.min(cw * .62, (W - cw) / (k - 1)) : 0;
     if (k > 1 && step < cw * .22) { cw = Math.max(36, W / (1 + (k - 1) * .3)); step = Math.min(cw * .62, (W - cw) / (k - 1)); }
     tr.style.setProperty("--cw", cw.toFixed(1) + "px");
     tr.style.setProperty("--step", step.toFixed(1) + "px");
     tr.style.width = (cw + step * (k - 1)).toFixed(1) + "px";
+    return cw;
   }
 
   function drawView(c) {
@@ -284,7 +301,8 @@ export function mount(root, ctx) {
     }).join("");
     // Card size: fit on one row (two when there are many)
     const T = R("table"), per = v.n > 5 && T.clientWidth < 460 ? Math.ceil(v.n / 2) : v.n;
-    const dw = Math.floor(Math.max(38, Math.min(76, (T.clientWidth - 24) / per - 8, (T.clientHeight - 110) / (per < v.n ? 2 : 1) / 1.42 - 20)));
+    const capD = wrap.classList.contains("big") || (watching() && T.clientWidth > 600) ? 120 : 76;
+    const dw = Math.floor(Math.max(38, Math.min(capD, (T.clientWidth - 24) / per - 8, (T.clientHeight - 110) / (per < v.n ? 2 : 1) / 1.42 - 20)));
     c.innerHTML = `<div class="dm-sub">${L("자리 뽑기 — 낮은 숫자부터 앉습니다", "Seat draw — lowest number sits first")}</div>` +
       `<div class="dm-draws" style="--cw:${dw}px; max-width:${per * (dw + 8) + 4}px">${items}</div>
       <div class="dm-need">${L(`<b>${nm(first)}</b> 님이 가장 낮은 카드로 첫 선`, `<b>${nm(first)}</b> drew the lowest card and leads`)}</div>`;
@@ -295,7 +313,9 @@ export function mount(root, ctx) {
     let html = `<div class="dm-sub">${L(`라운드 ${v.round} · 세금`, `Round ${v.round} · Tax`)}</div>`;
     if (!v.tax) {
       html += v.ask && v.ask.kind === "revolt"
-        ? `<div class="dm-big">${L("광대 2장이 내 손에!", "You hold both Jesters!")}</div><div class="dm-need">${L("혁명을 선언할지 고르세요", "Choose whether to declare a revolution")}</div>`
+        ? (replaying()
+          ? `<div class="dm-big">${L(`${nm(me)} 님 손에 광대 2장!`, `${nm(me)} holds both Jesters!`)}</div><div class="dm-need">${L("혁명을 선언할지 고르는 중", "Deciding whether to declare a revolution")}</div>`
+          : `<div class="dm-big">${L("광대 2장이 내 손에!", "You hold both Jesters!")}</div><div class="dm-need">${L("혁명을 선언할지 고르세요", "Choose whether to declare a revolution")}</div>`)
         : `<div class="dm-big dim">${L("세금을 걷을 준비 중…", "Preparing to collect taxes…")}</div>`;
       html += myTitleLine();
       c.innerHTML = html; return;
@@ -314,6 +334,7 @@ export function mount(root, ctx) {
   }
   function myTitleLine() {
     const v = M.v, t = v.titles[M.me];
+    if (watching()) return "";                          // spectators have no title
     return `<div class="dm-need">${L("이번 라운드 내 계급", "My title this round")}: ${crest(t)}<b style="color:${TITLE_COLOR[t]}">${titleName(t)}</b></div>`;
   }
 
@@ -336,6 +357,10 @@ export function mount(root, ctx) {
         : L(`라운드 ${v.round} 결과 — 이 순서로 다음 라운드에 앉습니다`, `Round ${v.round} results — next round's seating order`)}</div>
       <ol class="dm-stand"><li class="hd"><span></span><span>${L("이름", "Name")}</span><span>${last ? L("계급", "Title") : L("새 계급", "New title")}</span>` +
       `<span>${L("점수", "Pts")}</span><span>${L("합계", "Total")}</span></li>${rows}</ol>${tax}`;
+    // Short tables (phones held sideways, many players): tighten the rows until everything fits
+    const ol = c.querySelector(".dm-stand"), over = () => c.scrollHeight > c.clientHeight + 1;
+    if (over()) ol.classList.add("tight");
+    if (over()) ol.classList.add("tighter");
   }
 
   /* ---------- One line at the top: the important thing that just happened ---------- */
@@ -361,7 +386,7 @@ export function mount(root, ctx) {
     const place = v.finish.indexOf(me);
     R("me").innerHTML = `${crest(t)}<b class="ti" style="color:${TITLE_COLOR[t]}">${titleName(t)}</b>` +
       `<span class="it">${L(`<b>${v.scores[me]}</b>점 · ${rank}위`, `<b>${v.scores[me]}</b> pt · ${ord(rank)}`)}</span>` +
-      `<span class="it">${L(`라운드 <b>${v.round}</b>/${v.rounds}`, `Rd <b>${v.round}</b>/${v.rounds}`)}</span>` +
+      `<span class="it rd">${L(`라운드 <b>${v.round}</b>/${v.rounds}`, `Rd <b>${v.round}</b>/${v.rounds}`)}</span>` +
       `<span class="it">${place >= 0 && v.phase === "play" ? L(`<b>${place + 1}위</b> 탈출`, `Out <b>${ord(place + 1)}</b>`)
         : L(`내 패 <b>${v.sizes[me]}</b>장`, `Hand <b>${v.sizes[me]}</b>`)}</span><span class="more">${L("점수표 ›", "Scores ›")}</span>`;
   }
@@ -375,8 +400,13 @@ export function mount(root, ctx) {
     else if (v.phase === "roundEnd") t = v.finish[0] === me ? L("<b>1등!</b> 다음 라운드는 대달무티입니다 👑", "<b>1st!</b> You'll be Greater Dalmuti next round 👑")
       : L(`라운드 끝 — 나는 <b>${v.finish.indexOf(me) + 1}위</b>`, `Round over — you finished <b>${ord(v.finish.indexOf(me) + 1)}</b>`);
     else if (v.phase === "tax") {
-      if (v.ask && v.ask.kind === "return") t = L(`<b>${nm(v.ask.peon)}</b> 님에게 돌려줄 카드 <b>${v.ask.k}장</b>을 고르세요`, `Choose <b>${cardsEn(v.ask.k)}</b> to give back to <b>${nm(v.ask.peon)}</b>`);
-      else if (v.ask && v.ask.kind === "revolt") t = L("<b>혁명</b>을 선언할지 고르세요 (15초)", "Declare a <b>revolution</b>? (15s)");
+      const rp = replaying();                          // a replay describes the decision instead of asking for it
+      if (v.ask && v.ask.kind === "return") t = rp
+        ? L(`<b>${nm(me)}</b> 님이 <b>${nm(v.ask.peon)}</b> 님에게 돌려줄 카드 ${v.ask.k}장을 고르는 중`, `<b>${nm(me)}</b> is choosing ${cardsEn(v.ask.k)} to give back to <b>${nm(v.ask.peon)}</b>`)
+        : L(`<b>${nm(v.ask.peon)}</b> 님에게 돌려줄 카드 <b>${v.ask.k}장</b>을 고르세요`, `Choose <b>${cardsEn(v.ask.k)}</b> to give back to <b>${nm(v.ask.peon)}</b>`);
+      else if (v.ask && v.ask.kind === "revolt") t = rp
+        ? L(`<b>${nm(me)}</b> 님이 <b>혁명</b>을 고민하는 중`, `<b>${nm(me)}</b> is deciding on a <b>revolution</b>`)
+        : L("<b>혁명</b>을 선언할지 고르세요 (15초)", "Declare a <b>revolution</b>? (15s)");
       else t = L("세금 정산 중 — 잠시 기다리세요", "Collecting taxes — please wait");
     } else if (v.phase === "play") {
       const tr = v.trick;
@@ -420,6 +450,7 @@ export function mount(root, ctx) {
       const b = el("button", "dm-grp" + (r === JESTER ? " jk" : "") + (mine && st.can && !st.aux ? " can" : "") + (mine && !st.can ? " dim" : "") +
         (picked ? " sel" : "") + (dealIn ? " in" : "") + (cnt >= 3 ? " s3" : cnt === 2 ? " s2" : ""));
       b.style.setProperty("--i", i);
+      b.dataset.rank = r;
       b.innerHTML = cardHTML(r) + `<span class="n">${cnt}</span>` +
         (picked ? `<span class="pk">${L(`${picked}장`, `×${picked}`)}</span>` : mine && !st.can && st.why ? `<span class="why">${whyLabel(st.why)}</span>` : "");
       b.setAttribute("aria-label", L(`${label(r)} ${cnt}장` + (picked ? `, ${picked}장 고름` : "") + (mine && !st.can ? " (낼 수 없음)" : ""),
@@ -474,7 +505,7 @@ export function mount(root, ctx) {
 
   function tap(r) {
     const v = M.v, ask = myPlayAsk();
-    if (v.phase !== "play") return;
+    if (v.phase !== "play" || replaying() || watching()) return;
     if (!ask) {
       const who = esc(names()[v.turn] || "");
       flash(v.finish.includes(M.me) ? L("이미 패를 다 털었습니다", "You've already gone out") : L(`${who} 님 차례입니다`, `It's ${who}'s turn`));
@@ -519,7 +550,12 @@ export function mount(root, ctx) {
   function doPlay() {
     const v = M.v;
     if (!myPlayAsk() || busy() || !legalSel(v, sel)) return;
+    // remember where the cards leave my hand: their flight to the table starts there once the play comes back
+    const grp = r => { const b = R("hand").querySelector(`[data-rank="${r}"]`); return b ? b.getBoundingClientRect() : null; };
+    const from = { at: Date.now(), r: sel.rank !== JESTER ? grp(sel.rank) : null, j: sel.jesters ? grp(JESTER) : null };
+    sentFrom = from;                                   // set first: a local host may answer before send() returns
     if (ctx.send({ rank: sel.rank, plain: sel.plain, jesters: sel.jesters })) { markBusy(); sel = null; ctx.sound.place(); render(); }
+    else sentFrom = null;
   }
   function doPass() {
     if (!myPlayAsk() || busy() || !M.v.trick) return;
@@ -555,10 +591,11 @@ export function mount(root, ctx) {
     const v = M.v;
     ctx.modal((box, close) => {
       modalClose = close;
+      box.classList.add("dm-modal");
       ctx.head(box, L("혁명", "Revolution"), L("혁명을 선언할까요?", "Declare a revolution?"),
         L("광대 2장이 모두 내 손에 있습니다. 선언하면 <b>이번 라운드 세금이 전부 취소</b>되고 광대 2장이 모두에게 공개됩니다. 감추면 아무도 모릅니다. 15초 안에 고르지 않으면 감춘 것으로 합니다.",
           "You hold both Jesters. If you declare, <b>all taxes this round are cancelled</b> and both Jesters are shown to everyone. If you keep them hidden, nobody will know. No choice within 15 seconds counts as hiding them."));
-      box.appendChild(el("div", "dm-mnote", revoltNote(v.ask.title) + `<div class="dm-mcards">${cardHTML(JESTER)}${cardHTML(JESTER)}</div>`));
+      box.appendChild(el("div", "dm-mnote", `<span>${revoltNote(v.ask.title)}</span><div class="dm-mcards">${cardHTML(JESTER)}${cardHTML(JESTER)}</div>`));
       ctx.buttonRow(box, [
         { label: L("감춘다", "Keep hidden"), on: () => { if (ctx.myAsk("revolt")) ctx.send({ revolt: false }); close(); } },
         { label: L("혁명 선언!", "Revolution!"), primary: true, on: () => { if (ctx.myAsk("revolt")) ctx.send({ revolt: true }); ctx.sound.win(); close(); } }
@@ -570,6 +607,7 @@ export function mount(root, ctx) {
     const pick = [];
     ctx.modal((box, close) => {
       modalClose = close;
+      box.classList.add("dm-modal");
       ctx.head(box, L("세금", "Tax"), L(`${nm(peon)} 님에게 돌려줄 카드 ${k}장`, `Give ${cardsEn(k)} back to ${nm(peon)}`),
         L(`${nm(peon)} 님이 가장 낮은 숫자 ${k}장을 바쳤습니다. 아무 카드나 ${k}장을 골라 돌려주세요. 시간이 다 되면 가장 약한 카드가 나갑니다.`,
           `${nm(peon)} paid you their ${k === 1 ? "lowest card" : `${k} lowest cards`}. Pick any ${cardsEn(k)} to give back. If time runs out, your weakest ${k === 1 ? "card goes" : "cards go"}.`));
@@ -611,6 +649,7 @@ export function mount(root, ctx) {
     const v = M.v, n = v.n;
     const order = [...Array(n).keys()].sort((a, b) => v.scores[b] - v.scores[a]);
     ctx.modal((box, close) => {
+      box.classList.add("dm-modal", "dm-scores");
       ctx.head(box, L(`라운드 ${v.round} / ${v.rounds}`, `Round ${v.round} / ${v.rounds}`), L("점수표", "Scores"),
         L("라운드마다 1등 n점 … 꼴찌 1점. 칸의 글자는 그 라운드에서 얻은 계급입니다.",
           "Each round: 1st gets n points … last gets 1. Letters show the title earned that round: GD / LD Greater / Lesser Dalmuti, M Merchant, LP / GP Lesser / Greater Peon."));
@@ -633,7 +672,7 @@ export function mount(root, ctx) {
     const want = (s, r) => { if (r >= pr) { snd = s; pr = r; } };
     for (const e of m.ev) {
       if (e.type === "play") { hot.add(e.p); want("place", 1); if (e.p === me) sel = null; if (callKind === "trick") { callText = ""; callKind = ""; } }
-      else if (e.type === "pass") { hot.add(e.p); want("pass", 1); }
+      else if (e.type === "pass") { hotPass.add(e.p); passFx(e.p); want("pass", 1); }
       else if (e.type === "trickEnd") {
         callKind = "trick";
         callText = e.winner === me ? L("판을 가져왔습니다 — <b>내가 선</b>", "You won the trick — <b>you lead</b>")
@@ -645,7 +684,7 @@ export function mount(root, ctx) {
         const tn = titleName(e.title);
         callText = e.p === me ? L(`<b>${e.place}위</b>로 빠져나왔습니다 — ${tn}`, `You went out <b>${ord(e.place)}</b> — ${tn}`)
           : L(`<b>${nm(e.p)}</b> 님 ${e.place}위 — ${tn}`, `<b>${nm(e.p)}</b> out ${ord(e.place)} — ${tn}`);
-        if (e.p === me) { want(e.last ? "lose" : "good", 4); ctx.buzz(80); } else want("chip", 2);
+        if (e.p === me) { want(e.last ? "lose" : "good", 4); if (!replaying()) ctx.buzz(80); } else want("chip", 2);
       }
       else if (e.type === "draw") { callText = L("자리 뽑기", "Seat draw"); want("deal", 2); }
       else if (e.type === "deal") { callText = L(`라운드 ${e.round} — 카드를 나눴습니다`, `Round ${e.round} — cards dealt`); dealIn = true; sel = null; want("deal", 2); }
@@ -671,6 +710,15 @@ export function mount(root, ctx) {
     }
     if (snd && ctx.sound[snd]) ctx.sound[snd]();
   }
+  /* A pass: a grey "Pass" tag slides across the felt; the cards on the table stay where they are */
+  function passFx(p) {
+    const b = R("passfx");
+    b.innerHTML = `<span class="ico">✋</span><b>${p === M.me ? L("나", "You") : nm(p)}</b> ${L("패스", "pass")}` +
+      (M.v.passLock ? `<small>${L("이번 판은 끝", "out for this trick")}</small>` : "");
+    b.hidden = false;
+    b.classList.remove("go"); void b.offsetWidth; b.classList.add("go");
+    clearTimeout(passT); passT = setTimeout(() => { b.hidden = true; }, 1300);
+  }
   function banner(e) {
     const b = R("banner");
     b.hidden = false;
@@ -682,14 +730,54 @@ export function mount(root, ctx) {
     clearTimeout(bannerT); bannerT = setTimeout(() => { b.hidden = true; }, e.great ? 2600 : 2100);
   }
 
+  /* ---------- Flying cards (ctx.fly) ---------- */
+  const chipOf = p => R("seats").querySelector(`.dm-seat[data-p="${p}"]`);
+  function flights(m) {
+    if (!ctx.fly) return;
+    let k = 0;
+    for (const e of m.ev || []) {
+      if (e.type === "play") flyPlay(e);
+      else if (e.type === "tax") flyTax(e, k++);
+    }
+  }
+  /* A play: each card flies from the player's name chip (my own play: from the hand group I tapped) to its place on the table */
+  function flyPlay(e) {
+    const v = M.v, t = v.trick || v.prevTrick, tr = R("table").querySelector('[data-r="trick"]');
+    const mine = e.p === M.me && sentFrom && Date.now() - sentFrom.at < 8000 ? sentFrom : null;
+    if (e.p === M.me) sentFrom = null;
+    if (!t || !tr || t.by !== e.p || tr.classList.contains("empty")) return;
+    const chip = e.p === M.me && !watching() ? R("hand") : chipOf(e.p);
+    const cw = parseFloat(tr.style.getPropertyValue("--cw")) || 64;
+    [...tr.querySelectorAll(".slot")].forEach((slot, i) => {
+      const r = +slot.dataset.rank;
+      const from = mine ? (r === JESTER ? mine.j || mine.r : mine.r || mine.j) || chip : chip;
+      if (!from) return;
+      const html = `<span class="dm-flyc" style="--rot:${slotRot(i)}deg">${dmCardHTML(r, "", undefined, `--cw:${cw.toFixed(1)}px`)}</span>`;
+      ctx.fly(from, slot, { html, delay: i * 45, ms: 420 });
+    });
+  }
+  /* Tax: the cards move from one name chip to the other (faces only for the two players involved) */
+  function flyTax(e, k) {
+    const a = chipOf(e.from), b = chipOf(e.to);
+    if (!a || !b) return;
+    for (let i = 0; i < e.n; i++) {
+      const anchor = el("span", "dm-anchor");              // an invisible landing spot inside the receiving chip
+      b.appendChild(anchor);
+      const r = e.ranks && e.ranks[i];
+      const html = r ? dmCardHTML(r, "mini") : `<span class="dm-back"></span>`;
+      const delay = k * 200 + i * 110;
+      ctx.fly(a, anchor, { html, delay, ms: 520, scale: 1 });
+      setTimeout(() => anchor.remove(), delay + 600);
+    }
+  }
+
   /* ---------- Sizing ---------- */
   function fit() {
     const v = M.v, H = wrap.clientHeight, W = wrap.clientWidth;
     const gn = groups(v).length, gs = gn || 1;
     const hb = R("hand");
-    wrap.classList.toggle("short", H < 600);
-    wrap.classList.toggle("tall", H >= 760);
     if (!H || !W) { geo = { cw: 46, rows: gs > 7 ? 2 : 1 }; return; }
+    if (land()) return fitSide(gn, gs, hb);
     const hw = (hb.clientWidth || W - 20);
     const gap = 5;
     // up to 7 groups per row (more when wide)
@@ -708,22 +796,58 @@ export function mount(root, ctx) {
     // without cards (seat draw · went out) shrink the hand area so the table gets bigger
     hb.style.height = gn ? Math.ceil(rows * (cw * 1.42 + 8) + 2) + "px" : "40px";
   }
+  /* Landscape: the hand fills the right-hand column between my line · hint and the buttons.
+     Try 1–5 rows and keep the layout with the biggest cards. */
+  function fitSide(gn, gs, hb) {
+    hb.style.height = "";
+    const hw = hb.clientWidth, hh = hb.clientHeight;
+    const gap = 5, rowGap = 8, cap = wrap.classList.contains("big") ? 112 : 96;
+    let best = null;
+    for (let rows = 1; rows <= 5; rows++) {
+      const cols = Math.ceil(gs / rows);
+      if (rows > 1 && Math.ceil(gs / (rows - 1)) === cols) continue;     // no gain over fewer rows
+      const byW = (hw - (cols - 1) * gap - 10) / cols;
+      const byH = (hh - 10 - (rows - 1) * rowGap) / rows / 1.42;
+      const cw = Math.floor(Math.max(28, Math.min(cap, byW, byH)));
+      if (!best || cw > best.cw) best = { cw, rows };
+    }
+    geo = best;
+  }
 
   function render() {
     if (!M) return;
+    const spec = watching(), H = wrap.clientHeight;
+    wrap.classList.toggle("spec", spec);
+    wrap.classList.toggle("rp", replaying());
+    wrap.classList.toggle("short", H < 600);
+    wrap.classList.toggle("tall", H >= 760);
+    wrap.classList.toggle("big", land() && H >= 560);
+    wrap.classList.toggle("nohand", !spec && !groups(M.v).length);   // landscape: a narrower right column once my hand is empty
     const a = myPlayAsk();
     if (!a || a.id !== selAsk) sel = null;          // drop the chosen set when the turn changes
     if (sel && !(M.v.hand[sel.rank] > 0)) sel = null;
-    seats(); call(); meLine(); hint(); controls();
-    fit();
-    hand();
+    seats(); call();
+    if (!spec) {                                    // spectators have no hand, no line of their own and no buttons
+      meLine(); hint(); controls();
+      fit();
+      hand();
+    }
     center();
   }
   function update(m) {
+    const again = m === M || (!!evSeen && m.ev === evSeen);   // the same msg again: no sounds / flashes / flights twice
     M = m;
-    events(m);
+    if (!M.ev) M.ev = [];
+    flyNow = false;
+    if (!again) {
+      evSeen = M.ev;
+      events(m);
+      flyNow = !!ctx.fly && M.ev.some(e => e.type === "play");
+    }
     render();
-    hot = new Set();            // flash only once
+    if (!again) flights(m);
+    flyNow = false;
+    hot = new Set(); hotPass = new Set();   // flash only once
     asks();
   }
   function onResize() { if (M) render(); }
@@ -732,9 +856,10 @@ export function mount(root, ctx) {
   return {
     update,
     ticker: false,            // this trick's record and the top line (call) replace the history ticker
+    landscape: true,          // own sideways layout (name chips left · table · hand and buttons right)
     destroy() {
       window.removeEventListener("resize", onResize);
-      clearTimeout(busyT); clearTimeout(flashT); clearTimeout(bannerT);
+      clearTimeout(busyT); clearTimeout(flashT); clearTimeout(bannerT); clearTimeout(passT);
       if (modalClose) { try { modalClose(); } catch (e) { } }
       root.innerHTML = "";
     }

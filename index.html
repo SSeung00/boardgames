@@ -16,7 +16,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="놀이방 · Game Room">
 <meta property="og:title" content="보드게임 놀이방 — 같이 한 판 해요!">
-<meta property="og:description" content="달무티 · 원카드 · 포커 · 고스톱 · 보석 상인 · 금광 탐험 · 도둑잡기. 링크를 누르면 바로 들어와요.">
+<meta property="og:description" content="달무티 · 원카드 · 포커 · 고스톱 · 라이어 게임 · 요트 다이스 · 거짓말 주사위 외 11가지. 링크나 QR로 바로 들어와요.">
 <meta property="og:image" content="https://sseung00.github.io/boardgames/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -32,6 +32,7 @@
       <div class="topbtns"><button class="langbtn" aria-label="Language">🌐 EN</button><button class="roundbtn" id="bSettings" data-ko-label="설정" data-en-label="Settings" aria-label="설정">⚙️</button></div>
       <h1 class="logo" data-ko="놀이방" data-en="Game Room">놀이방</h1>
       <p class="sub" data-ko="친구들과 폰으로 하는 보드게임 · 빈자리는 AI 가 채워요" data-en="Board games with friends on your phone · AI fills empty seats">친구들과 폰으로 하는 보드게임 · 빈자리는 AI 가 채워요</p>
+      <div class="kakao" id="kakaoBar" hidden></div>
       <div id="homeResume"></div>
       <div class="sheet">
         <label class="eyebrow" for="inName" data-ko="이름" data-en="Name">이름</label>
@@ -48,6 +49,7 @@
           <input id="inCode" class="inp code" maxlength="5" autocomplete="off" placeholder="방 코드" data-ko-ph="방 코드" data-en-ph="Code" aria-label="Room code">
           <button class="btn" id="bJoin" data-ko="들어가기" data-en="Join">들어가기</button>
         </div>
+        <button class="linkbtn tvlink" id="bWatch" data-ko="📺 TV·태블릿을 관전 화면으로 열기 (코드 입력 후)" data-en="📺 Open as a watching screen on a TV or tablet (enter the code first)">📺 TV·태블릿을 관전 화면으로 열기 (코드 입력 후)</button>
         <div class="err" id="homeErr" role="alert"></div>
       </div>
       <div class="eyebrow mt" data-ko="게임 — 눌러서 규칙 보기" data-en="Games — tap for rules">게임 — 눌러서 규칙 보기</div>
@@ -55,6 +57,7 @@
       <p class="foot" data-ko="방장의 화면이 게임을 진행합니다 · 서버 없이 기기끼리 직접 연결" data-en="The host's screen runs the game · devices connect directly, no server">방장의 화면이 게임을 진행합니다 · 서버 없이 기기끼리 직접 연결</p>
       <p class="foot links">
         <button class="linkbtn" id="bStats" data-ko="📊 내 전적" data-en="📊 My record">📊 내 전적</button>
+        <button class="linkbtn" id="bReplays" data-ko="🎬 다시보기" data-en="🎬 Replays">🎬 다시보기</button>
         <button class="linkbtn" id="bInstall" hidden data-ko="📲 앱으로 설치" data-en="📲 Install app">📲 앱으로 설치</button>
         <button class="linkbtn" id="bNetLog" data-ko="연결 기록 보기" data-en="Connection log">연결 기록 보기</button>
       </p>
@@ -82,6 +85,8 @@
     </header>
     <div class="ticker" id="ticker"></div>
     <div class="awaybar" id="awayBar" hidden></div>
+    <div class="specbar" id="specBar" hidden></div>
+    <div class="replaybar" id="replayBar" hidden></div>
     <main id="stage" class="stage"></main>
   </section>
 </div>

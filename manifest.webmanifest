@@ -4,7 +4,7 @@
  "start_url": "./",
  "scope": "./",
  "display": "standalone",
- "orientation": "portrait",
+ "orientation": "any",
  "background_color": "#0f1a15",
  "theme_color": "#0f1a15",
  "lang": "ko",
@@ -27,5 +27,6 @@
    "type": "image/png",
    "purpose": "maskable"
   }
- ]
+ ],
+ "description": "친구들과 폰으로 하는 보드게임 · Board games with friends on your phone"
 }

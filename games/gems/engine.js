@@ -456,6 +456,7 @@ export default {
     <li>If you have no legal action, your turn is skipped. If everyone passes for a whole round, or after ${MAX_ROUNDS} rounds, the game ends with the current scores.</li>
   </ul>`),
   stepLimit: 5000,
+  spectate: true,          // view(S, -1) is the public view: market, bank, nobles, every seat's gems, cards and points; blind reserves stay hidden
 
   setup({ n, seed, settings }) {
     const goal = settings && [15, 21].includes(settings.goal) ? settings.goal : 15;

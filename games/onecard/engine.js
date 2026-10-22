@@ -444,6 +444,7 @@ export default {
   ],
   rules,
   stepLimit: 60000,
+  spectate: true,                                         // view(S, -1) is the public table (no hands, no drawn cards)
 
   setup({ n, seed, settings = {} }) {
     const pickSet = (k, vals, d) => (vals.includes(settings[k]) ? settings[k] : d);
@@ -511,7 +512,7 @@ export default {
   step() { return []; },
   delay() { return 600; },
 
-  /* Drawn cards are seen only by the player who drew them */
+  /* Drawn cards are seen only by the player who drew them (spectators, p = -1, never see them) */
   filterEvent(ev, p) {
     if (ev.type === "draw" && ev.p !== p) return { ...ev, cards: null };
     return ev;
@@ -542,6 +543,7 @@ export default {
     let status = "";
     if (S.phase === "over") status = tx("게임 끝", "Game over");
     else if (S.call) status = S.call.p === me ? tx("한 장 남았습니다 — 원카드!", "One card left — call it!")
+      : me < 0 ? tx(`{${S.call.p}} 님이 한 장 — 원카드!`, `{${S.call.p}} is down to one card — "One card!"`)
       : callWaiting(S).includes(me) ? tx("원카드 — 먼저 누르면 잡습니다!", "One card — press first to catch them!") : tx("원카드 — 결과를 기다리는 중", "One card — waiting for the result");
     else if (myTurn) status = S.attack > 0 ? tx(`공격 +${S.attack} — 막거나 받으세요`, `Attack +${S.attack} — answer or draw`)
       : S.again ? tx("K — 한 장 더 내세요", "K — play another card") : tx("내 차례 — 낼 카드를 고르세요", "Your turn — play a card");
@@ -607,6 +609,11 @@ export default {
       else if (x && typeof x === "object") Object.values(x).forEach(walk);
     })(v);
     if (bad.length) return `hidden cards exposed: ${bad.slice(0, 5).join(",")}`;
+    if (p < 0) {                                          // spectators: no hand, nothing to play, no private call state
+      if (v.hand.length || v.legal.length) return "spectator view contains a hand";
+      if (v.call && v.call.waiting) return "spectator view asks for a call";
+      return true;
+    }
     if (v.hand.length !== S.hands[p].length) return "my hand size differs";
     return true;
   }

@@ -20,8 +20,12 @@
    - People are identified by a per-tab token; someone who returns from another browser gets their seat back by name.
    - A disconnected player keeps their seat for a grace period before the AI plays for them — or, with the "wait" setting,
      the game waits until they come back or the host hands their seat to the AI.
-   - People who arrive during a game wait and join from the next game.
-   - The room keeps a scoreboard of the evening (tally) until it is closed. */
+   - People who arrive during a game wait and join from the next game — meanwhile they watch it (spectator view).
+   - Watchers (a TV or tablet showing the table, "watch" in the hello) see the public view only and never get a seat.
+   - The room keeps a scoreboard of the evening (tally) until it is closed.
+   - Every game records its seed and moves (log) so anyone can replay it afterwards (core/replay.js).
+   - One guest (the heir) keeps a copy of the saved room. If the host never comes back, the heir reopens the room with
+     the same code and everyone reconnects to them (app.js / net.js take over). */
 import { GAMES, gameById } from "../games/registry.js";
 import { LS, toast, sound, steadySleep as hostSleep, cleanLook } from "./ui.js";
 import { EMOTE_IDS } from "./social.js";
@@ -38,6 +42,7 @@ const GRACE_REOPEN = 60000;    // after the host reopens the room, everyone gets
 const SILENT = 15000;          // a guest that sends nothing (not even a ping) for this long counts as disconnected
 const SAVE_TTL = 12 * 3600 * 1000;
 const EMOTE_GAP = 800;         // at most one reaction per person in this time
+const MAX_WATCH = 3;           // TV / tablet screens per room (the host's browser handles only so many connections well)
 export const MAX_ROOM = Math.max(...GAMES.map(g => g.engine.players.max));
 
 
@@ -57,12 +62,15 @@ export class Room {
     this.code = code;              // null = solo (AI only)
     this.deliver = deliver;
     this.waiting = [];             // people who arrived during a game: {name, token, conn, online}
+    this.watchers = [];            // TV / tablet screens: {name, look, token, conn, online} (or my own screen, local, in solo watch mode)
     this.runner = null;
     this.alive = true;
     this.tally = [];               // scoreboard of the evening: [{name, look, pts, wins, games}]
+    this.heir = null;              // the guest holding the backup copy
     if (code) this.watch();
     if (saved) return this.restore(saved, name, token, look);
-    this.players = [{ name: cleanName(name), look: cleanLook(look), token, kind: "human", local: true, online: true, conn: null }];
+    this.self = { name: cleanName(name), look: cleanLook(look), token, kind: "human", local: true, online: true, conn: null };
+    this.players = [this.self];
     const pref = LS.json("room", {});
     this.settings = Object.assign({ game: GAMES[0].id, level: "normal", timer: 30, away: "ai", opts: {} }, pref);
     // Online rooms start in "auto" (AI only fills up to the game's minimum); solo play starts with the game's usual size
@@ -72,6 +80,8 @@ export class Room {
   }
   get engine() { return gameById(this.settings.game).engine; }
   humans() { return this.players.filter(p => p.kind === "human"); }
+  /* My own seat (-1 while I only watch) */
+  mySeat() { return this.players.findIndex(p => p.local); }
   /* humans who will take part in the next game: seated humans still around + people waiting */
   nextHumans() { return [...this.humans().filter(p => p.local || p.online), ...this.waiting.filter(w => w.online)]; }
 
@@ -98,21 +108,40 @@ export class Room {
     if (!this.code || !this.alive) return;
     try {
       const r = this.runner;
-      LS.put("host", {
+      this.snap = JSON.parse(JSON.stringify({
         code: this.code, at: Date.now(), settings: this.settings, tally: this.tally,
         players: this.players.map(p => ({ name: p.name, look: p.look || null, token: p.token, kind: p.kind, handed: !!p.handed })),
         waiting: this.waiting.map(w => ({ name: w.name, look: w.look || null, token: w.token })),
-        game: r && r.alive ? { id: r.E.id, S: r.S, runId: r.runId, seq: r.seq, settings: r.settings, finished: r.finished, recorded: !!r.recorded } : null
-      });
+        game: r && r.alive ? { id: r.E.id, S: r.S, runId: r.runId, seq: r.seq, settings: r.settings, finished: r.finished, recorded: !!r.recorded,
+          seed: r.seed, log: r.log } : null
+      }));
+      LS.put("host", this.snap);
     } catch (e) { console.error("save failed", e); }
+    this.scheduleBackup();
+  }
+  /* The heir (the first guest still connected) gets a copy of the saved room a moment after each change */
+  scheduleBackup() {
+    if (!this.code || this.backupT) return;
+    this.backupT = setTimeout(() => { this.backupT = 0; this.sendBackup(); }, 1500);
+  }
+  sendBackup() {
+    if (!this.alive || !this.code) return;
+    const heir = this.players.find(p => p.kind === "human" && !p.local && p.online && p.conn) || null;
+    if (this.heir && this.heir !== heir && this.heir.conn) try { this.heir.conn.send({ t: "backup", data: null }); } catch (e) { }
+    this.heir = heir;
+    if (heir && this.snap) try { heir.conn.send({ t: "backup", data: this.snap }); } catch (e) { }
   }
   restore(s, name, token, look) {
     this.settings = Object.assign({ away: "ai" }, s.settings);
     this.tally = s.tally || [];
     const grace = Date.now() + GRACE_REOPEN;
-    this.players = s.players.map((p, i) => i === 0
+    // My seat: the one with my token — seat 0 when I made the room, another seat when I take over as the heir
+    let mine = s.players.findIndex(p => p.kind === "human" && p.token === token);
+    if (mine < 0) mine = 0;
+    this.players = s.players.map((p, i) => i === mine
       ? { name: cleanName(p.name || name), look: cleanLook(look), token, kind: "human", local: true, online: true, conn: null }
       : { ...p, local: false, online: p.kind === "ai", conn: null, graceUntil: p.kind === "human" ? grace : 0 });
+    this.self = this.players[mine];
     this.waiting = (s.waiting || []).map(w => ({ ...w, conn: null, online: false }));
     if (s.game && gameById(s.game.id)) {
       this.runner = new Runner(this, gameById(s.game.id).engine, s.game.settings, s.game);
@@ -137,7 +166,7 @@ export class Room {
     while (this.alive) {
       await hostSleep(3000);
       const now = Date.now();
-      for (const x of [...this.players, ...this.waiting]) {
+      for (const x of [...this.players, ...this.waiting, ...this.watchers]) {
         if (x.conn && x.online && x.conn.pinged && now - x.conn.seen > SILENT) this.drop(x.conn);
       }
     }
@@ -155,15 +184,19 @@ export class Room {
     if (p >= 0) return this.receive(p, msg);
     const w = this.waiting.find(x => x.conn === conn);
     if (w && msg.t === "bye") { this.waiting.splice(this.waiting.indexOf(w), 1); this.save(); }
+    const wt = this.watchers.find(x => x.conn === conn);
+    if (wt && msg.t === "bye") this.watchers.splice(this.watchers.indexOf(wt), 1);
   }
   hello(conn, msg) {
     const name = cleanName(msg.name), look = cleanLook(msg.look);
+    if (msg.watch) return this.helloWatch(conn, msg, name, look);
     const attach = (pl, p) => {
       if (pl.conn && pl.conn !== conn) try { pl.conn.close(); } catch (e) { }
       pl.conn = conn; pl.online = true; pl.token = msg.token; pl.graceUntil = 0; pl.handed = false; pl.look = look;
       if (this.runner) this.runner.presence(p, tx(`{${p}} 님이 다시 들어왔습니다`, `{${p}} is back`));
       else this.lobby();
       this.save();
+      this.replayTo(pl);
     };
     // 1) same tab coming back (token)  2) an empty human seat with the same name (another browser or a new tab)
     let p = this.players.findIndex(x => !x.local && x.kind === "human" && x.token === msg.token);
@@ -174,6 +207,7 @@ export class Room {
       if (w.conn && w.conn !== conn) try { w.conn.close(); } catch (e) { }
       w.conn = conn; w.online = true; w.token = msg.token; w.look = look;
       this.sendWait(w);
+      this.replayTo(w);
       return;
     }
     const reject = text => { try { conn.send({ t: "reject", text }); } catch (e) { } setTimeout(() => { try { conn.close(); } catch (e) { } }, 600); };
@@ -194,6 +228,24 @@ export class Room {
     toast(L(`${unique} 님이 들어왔습니다`, `${unique} joined`)); sound.join();
     this.lobby();
   }
+  /* A TV / tablet screen: public view only, no seat */
+  helloWatch(conn, msg, name, look) {
+    let w = this.watchers.find(x => !x.local && x.token === msg.token);
+    if (!w) {
+      this.watchers = this.watchers.filter(x => x.local || x.online);         // screens that went away make room
+      if (this.watchers.filter(x => !x.local).length >= MAX_WATCH) {
+        try { conn.send({ t: "reject", text: tx(`관전 화면은 ${MAX_WATCH}개까지 열 수 있습니다.`, `At most ${MAX_WATCH} watching screens per room.`) }); } catch (e) { }
+        return;
+      }
+      w = { token: msg.token };
+      this.watchers.push(w);
+      toast(L(`${name} 님이 관전 화면을 열었습니다`, `${name} opened a watching screen`));
+    }
+    if (w.conn && w.conn !== conn) try { w.conn.close(); } catch (e) { }
+    Object.assign(w, { name, look, conn, online: true });
+    if (this.runner) this.runner.broadcast(); else this.lobby();
+    this.replayTo(w);
+  }
   uniqueName(name, self) {
     const taken = new Set([...this.humans(), ...this.waiting].filter(p => p !== self).map(p => p.name));
     if (!taken.has(name)) return name;
@@ -205,6 +257,8 @@ export class Room {
   }
   onClose(conn, bye) {
     if (!this.alive) return;
+    const wt = this.watchers.find(x => x.conn === conn);
+    if (wt) { wt.conn = null; wt.online = false; if (bye) this.watchers.splice(this.watchers.indexOf(wt), 1); return; }
     const w = this.waiting.find(x => x.conn === conn);
     if (w) { w.conn = null; w.online = false; if (bye) this.waiting.splice(this.waiting.indexOf(w), 1); this.save(); return; }
     const p = this.players.findIndex(x => x.conn === conn);
@@ -226,15 +280,16 @@ export class Room {
         ? tx(`{${p}} 님의 연결이 끊겼습니다 — 돌아올 때까지 기다립니다`, `{${p}} disconnected — waiting for them to come back`)
         : tx(`{${p}} 님의 연결이 끊겼습니다 — ${GRACE_DROP / 1000}초 기다린 뒤 AI 가 대신 둡니다`, `{${p}} disconnected — AI takes over after ${GRACE_DROP / 1000}s`));
     this.save();
+    if (this.heir === pl) this.sendBackup();          // pick a new heir at once
   }
   sendTo(p, msg) {
     const pl = this.players[p];
     if (pl && pl.kind === "human") this.deliver(pl, msg);
   }
-  /* A message from a seated person */
-  receive(p, msg) {
+  /* A message from a seated person (p), or from my own screen (fromHost: also while I only watch) */
+  receive(p, msg, fromHost) {
     if (!msg || !msg.t) return;
-    const isHost = this.players[p] && this.players[p].local;
+    const isHost = fromHost || !!(this.players[p] && this.players[p].local);
     if (msg.t === "act") { if (this.runner) this.runner.receive(p, msg); return; }
     if (msg.t === "bye") { if (!isHost) this.onClose(this.players[p].conn, true); return; }
     if (msg.t === "emote") return this.emote(p, msg.e);
@@ -253,7 +308,7 @@ export class Room {
     if (!pl || pl.kind !== "human" || !EMOTE_IDS.has(e) || now - (pl.lastEmote || 0) < EMOTE_GAP) return;
     pl.lastEmote = now;
     const msg = { t: "emote", name: pl.name, look: pl.look || null, seat: p, e };
-    for (const h of this.humans()) if (h.local || h.online) this.deliver(h, msg);
+    for (const h of [...this.humans(), ...this.watchers]) if (h.local || h.online) this.deliver(h, msg);
   }
   /* Someone changed their name or avatar */
   profile(p, msg) {
@@ -266,6 +321,7 @@ export class Room {
       if (t && !this.tally.some(x => x.name === name)) t.name = name;
       pl.name = name;
     }
+    if (pl.local) Object.assign(this.self, { name: pl.name, look: pl.look });
     const t = this.tally.find(x => x.name === pl.name);
     if (t) t.look = pl.look;
     if (this.runner) this.runner.broadcast(); else this.lobby();
@@ -295,16 +351,39 @@ export class Room {
     }
   }
 
+  /* The finished game's seed and moves, for replays (core/replay.js) */
+  sendReplay(r) {
+    if (!r.log) return;
+    r.replayData = { game: r.E.id, run: r.runId, seed: r.seed, n: this.players.length, opts: r.settings.opts, log: r.log, at: Date.now(),
+      players: this.publicPlayers().map(({ name, look, kind }) => ({ name, look, kind: kind === "ai" ? "ai" : "human" })) };
+    for (const h of [...this.humans(), ...this.watchers, ...this.waiting]) if (h.local || h.online) this.replayTo(h);
+  }
+  /* The replay of the finished game to one person (also to someone who reconnects while the results are on screen) */
+  replayTo(h) {
+    const r = this.runner;
+    if (!r || !r.finished || !r.replayData || !(h.local || (h.online && h.conn))) return;
+    const msg = { t: "replay", data: r.replayData };
+    try { if (h.local) this.deliver(h, msg); else h.conn.send(msg); } catch (e) { }
+  }
+  /* Who sees the public view: watching screens, people waiting for the next game */
+  spectators() {
+    return [...this.watchers.filter(w => w.local || (w.online && w.conn)).map(w => ({ ent: w, waiting: false })),
+            ...this.waiting.filter(w => w.online && w.conn).map(w => ({ ent: w, waiting: true }))];
+  }
+
   /* ----- Lobby ----- */
   publicPlayers() {
-    return this.players.map((pl, i) => ({ name: pl.name, look: pl.look || null, kind: pl.kind === "ai" ? "ai" : (pl.online || pl.local ? "human" : "away"),
-      host: i === 0 && pl.kind === "human", handed: !!pl.handed }));
+    return this.players.map(pl => ({ name: pl.name, look: pl.look || null, kind: pl.kind === "ai" ? "ai" : (pl.online || pl.local ? "human" : "away"),
+      host: !!pl.local && pl.kind === "human", handed: !!pl.handed }));
   }
   lobby() {
     const humans = this.humans();
-    const list = humans.map((pl, i) => ({ name: pl.name, look: pl.look || null, host: i === 0, away: !pl.local && !pl.online }));
+    const list = humans.map(pl => ({ name: pl.name, look: pl.look || null, host: !!pl.local, away: !pl.local && !pl.online }));
     const n = this.seatsFor(humans.length);
-    humans.forEach((pl, i) => this.deliver(pl, { t: "lobby", you: i, code: this.code, players: list, settings: this.settings, seats: n, tally: this.tally }));
+    const base = { t: "lobby", code: this.code, players: list, settings: this.settings, seats: n, tally: this.tally,
+      watchers: this.watchers.filter(w => !w.local && w.online).map(w => w.name) };
+    humans.forEach((pl, i) => this.deliver(pl, { ...base, you: i }));
+    for (const w of this.watchers) if (!w.local && w.online) this.deliver(w, { ...base, you: -1, watching: true });
     this.save();
   }
   setSetting(key, value) {
@@ -312,6 +391,7 @@ export class Room {
     if (key === "game") { if (!gameById(value)) return; this.settings.game = value; this.settings.opts = {}; if (this.settings.seats !== "auto") this.settings.seats = 0; }
     else if (key === "seats" || key === "level" || key === "timer") this.settings[key] = value;
     else if (key === "away") this.settings.away = value === "wait" ? "wait" : "ai";
+    else if (key === "watch") this.settings.watch = !this.code && !!value;   // solo: watch the AI play
     else if (key.startsWith("opt.")) this.settings.opts[key.slice(4)] = value;
     this.fixSettings();
     const { seats, ...pref } = this.settings;
@@ -321,7 +401,11 @@ export class Room {
   start() {
     if (this.runner && !this.runner.finished) return;
     const E = this.engine;
-    const humans = this.nextHumans().map(h => ({ name: h.name, look: h.look || null, token: h.token, kind: "human", conn: h.conn, local: !!h.local, online: h.local ? true : !!h.online }));
+    let humans = this.nextHumans().map(h => ({ name: h.name, look: h.look || null, token: h.token, kind: "human", conn: h.conn, local: !!h.local, online: h.local ? true : !!h.online }));
+    if (!humans.some(h => h.local)) humans.unshift(this.self);
+    // Solo "watch" mode: my screen becomes a watcher and every seat is AI
+    this.watchers = this.watchers.filter(w => !w.local);
+    if (!this.code && this.settings.watch && E.spectate) { humans = []; this.watchers.push({ ...this.self }); }
     if (humans.length > E.players.max) { toast(L(`이 게임은 최대 ${E.players.max}명입니다`, `This game allows at most ${E.players.max} players`)); return; }
     this.waiting = [];
     this.fixSettings();
@@ -338,6 +422,8 @@ export class Room {
     if (this.runner) this.runner.stop();
     this.runner = null;
     const merged = this.nextHumans().map(h => ({ name: h.name, look: h.look || null, token: h.token, kind: "human", conn: h.conn, local: !!h.local, online: h.local ? true : !!h.online }));
+    if (!merged.some(h => h.local)) merged.unshift(this.self);
+    this.watchers = this.watchers.filter(w => !w.local);
     this.players = merged;
     this.waiting = [];
     this.fixSettings();
@@ -347,7 +433,7 @@ export class Room {
   close() {
     const msg = { t: "closed" };
     for (const pl of this.humans()) if (!pl.local) this.deliver(pl, msg);
-    for (const w of this.waiting) try { if (w.conn) w.conn.send(msg); } catch (e) { }
+    for (const w of [...this.waiting, ...this.watchers]) try { if (w.conn) w.conn.send(msg); } catch (e) { }
     this.stop();
     this.runner = null;
     forgetSavedRoom();
@@ -360,13 +446,15 @@ class Runner {
     this.room = room; this.E = engine; this.settings = JSON.parse(JSON.stringify(settings));
     if (restore) {
       this.S = restore.S; this.seq = restore.seq || 0; this.runId = restore.runId; this.recorded = !!restore.recorded;
+      this.seed = restore.seed; this.log = restore.log || null;          // games saved before replays existed have no log
     } else {
       const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
       this.S = engine.setup({ n: room.players.length, seed, settings: this.settings.opts });
+      this.seed = seed; this.log = [];                                    // 0 = step(), [p, action] = apply()
       this.seq = 0;
       this.runId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);   // lets clients redraw on "play again"
     }
-    this.askSeq = 0; this.asks = new Map(); this.alive = true; this.finished = false;
+    this.askSeq = Math.floor(Math.random() * 1e6) * 100; this.asks = new Map(); this.alive = true; this.finished = false;
     this.kick = null; this.outbox = [];
   }
   stop() { this.alive = false; for (const a of this.asks.values()) a.cancel(); this.asks.clear(); if (this.kick) this.kick({ kick: true }); }
@@ -420,9 +508,10 @@ class Runner {
     } else {
       const think = x.think !== undefined ? x.think : (this.E.thinkTime ? this.E.thinkTime(this.S, x.p, x.kind) : 700 + Math.random() * 700);
       // "wait": a disconnected human's turn waits until they return (presence() rebuilds the question) or the host hands it over
-      if (pl.kind === "human" && !pl.handed && this.settings.away === "wait") { ask.away = true; return ask; }
-      // otherwise the seat is kept for a grace period before the AI plays for them
-      const grace = pl.kind === "human" && !pl.handed ? Math.max(0, (pl.graceUntil || 0) - Date.now()) : 0;
+      if (pl.kind === "human" && !pl.handed && this.settings.away === "wait" && !x.secret) { ask.away = true; return ask; }
+      // otherwise the seat is kept for a grace period before the AI plays for them (secret decisions: at least that long)
+      let grace = pl.kind === "human" && !pl.handed ? Math.max(0, (pl.graceUntil || 0) - Date.now()) : 0;
+      if (pl.kind === "human" && !pl.handed && x.secret && this.settings.away === "wait") grace = Math.max(grace, GRACE_DROP);
       if (grace) { ask.away = true; ask.deadline = Date.now() + grace; ask.total = grace; }
       hostSleep(grace + think).then(aiMove);
     }
@@ -452,6 +541,19 @@ class Runner {
       this.room.sendTo(p, { t: "state", run: this.runId, seq: this.seq, game: this.E.id, me: p, v, ev, pending, players, waiting, settings: this.settings, over, results,
         tally: over ? this.room.tally : undefined });
     });
+    // Spectators: the public view (me = -1) for games that support it
+    const specs = this.E.spectate ? this.room.spectators() : [];
+    if (specs.length) {
+      let v = null;
+      try { v = this.E.view(this.S, -1); } catch (e) { console.error("spectator view failed", e); }
+      if (v) {
+        let ev = [];
+        try { ev = evs.map(e => (this.E.filterEvent ? this.E.filterEvent(e, -1, this.S) : e)).filter(Boolean); } catch (e) { console.error("spectator events failed", e); }
+        const pending = asks.filter(a => !a.secret).map(({ secret, ...a }) => a);
+        for (const s of specs) this.room.deliver(s.ent, { t: "state", run: this.runId, seq: this.seq, game: this.E.id, me: -1, v, ev, pending, players, waiting,
+          settings: this.settings, over, results, tally: over ? this.room.tally : undefined, spectator: true, waitingSeat: s.waiting });
+      }
+    }
     if (over) for (const w of this.room.waiting) if (w.conn) this.room.sendWait(w);
     this.room.save();
   }
@@ -465,7 +567,10 @@ class Runner {
           this.broadcast();
           await hostSleep(this.E.delay ? this.E.delay(this.S) : 1200);
           if (!this.alive) return;
-          if (!this.E.pending(this.S).length && !this.E.over(this.S)) this.outbox.push(...(this.E.step(this.S) || []));
+          if (!this.E.pending(this.S).length && !this.E.over(this.S)) {
+            if (this.log) this.log.push(0);
+            this.outbox.push(...(this.E.step(this.S) || []));
+          }
           continue;
         }
         this.syncAsks(pend);
@@ -485,6 +590,7 @@ class Runner {
           r.action = this.E.timeout(this.S, r.p, a.kind);
           if (this.E.validate(this.S, r.p, r.action) !== true) throw new Error(`${this.E.id}: fallback action is illegal too`);
         }
+        if (this.log) this.log.push([r.p, JSON.parse(JSON.stringify(r.action))]);
         const evs = this.E.apply(this.S, r.p, r.action) || [];
         if (r.timeout) this.outbox.push({ type: "notice", text: tx(`{${r.p}} 님 시간 초과`, `{${r.p}} ran out of time`) });
         this.outbox.push(...evs);
@@ -493,6 +599,7 @@ class Runner {
       this.finished = true;
       this.syncAsks([]);
       this.broadcast();
+      this.room.sendReplay(this);
     } catch (e) {
       console.error(e);
       this.outbox.push({ type: "notice", text: tx("게임 진행 중 오류가 났습니다: " + (e.message || e), "Something went wrong in the game: " + (e.message || e)) });

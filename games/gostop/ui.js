@@ -5,8 +5,14 @@
    Hand: without tapping, each card shows what it would take from the floor, whether the score rises, whether it blocks an
    opponent's set, and whether it can shake/bomb. One tap selects (with a preview), a second tap plays.
    The panels show the history directly, so the one-line ticker at the top is turned off.
+   Spectators (me = -1, watching screens and public replays): no hand or dock; every seat's panel shows its captured cards
+   when there is room, and the floor takes the rest.
+   Landscape (phones held sideways, computers, TVs): the panels form a column on the left, the felt and my hand fill the right.
+   Flying cards (ctx.fly): played cards fly from the player's panel (or the card I tapped) to the floor, flipped cards from the
+   draw pile, then captured cards fly from the floor to the capturer's panel. An update that also captured cards is drawn in
+   two stages: first the floor with the captured cards still on it, then (≈0.6 s later) the final state.
    All visible text goes through L()/loc() at render time (Korean / English). */
-import { CARDS, hwHTML, monthOf, isBonus, cardName, groupOf, kindKey, kindLabel, shortLabel, mon, SET_NAME, SET_SHORT, SET_CARDS, COMBO } from "./cards.js";
+import { CARDS, hwHTML, monthOf, isBonus, cardName, groupOf, kindKey, kindLabel, shortLabel, mon, sortCards, SET_NAME, SET_SHORT, SET_CARDS, COMBO } from "./cards.js";
 import { scoreOf, settle } from "./engine.js";
 import { L, loc, tx } from "../../core/i18n.js";
 
@@ -36,6 +42,9 @@ function itemShort(it) {
   return loc(SET_SHORT[k] || it[0]);
 }
 const bakName = k => ({ pibak: L("피박", "Pibak"), gwangbak: L("광박", "Gwangbak"), meongbak: L("멍박", "Meongbak"), gobak: L("고박", "Gobak") })[k];
+/* Same query as the landscape rules in style.css */
+const LAND = typeof matchMedia === "function" ? matchMedia("(orientation: landscape) and (min-aspect-ratio: 4/3)") : { matches: false };
+const calm = () => document.documentElement.dataset.motion === "calm" || matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /* One card as a text-sized token (for the last-move line) */
 function tok(id) {
@@ -50,16 +59,20 @@ export function mount(root, ctx) {
   root.innerHTML = "";
   const wrap = el("div", "gs");
   wrap.innerHTML = `
-    <div class="gs-opps" data-r="opps"></div>
-    <div class="gs-table felt" data-r="table">
-      <div class="gs-floor" data-r="floor"></div>
-      <div class="gs-pick" data-r="pick" hidden></div>
-      <div class="gs-banner" data-r="banner"></div>
+    <div class="gs-side" data-r="side">
+      <div class="gs-opps" data-r="opps"></div>
+      <div class="gs-p gs-mine" data-r="mine" role="button" tabindex="0"></div>
     </div>
-    <div class="gs-p gs-mine" data-r="mine" role="button" tabindex="0" aria-label="${esc(L("내 정보 · 먹은 패 보기", "My info · view captured cards"))}"></div>
-    <div class="gs-dock">
-      <div class="gs-hint" data-r="hint"></div>
-      <div class="gs-hand" data-r="hand"></div>
+    <div class="gs-main">
+      <div class="gs-table felt" data-r="table">
+        <div class="gs-floor" data-r="floor"></div>
+        <div class="gs-pick" data-r="pick" hidden></div>
+        <div class="gs-banner" data-r="banner"></div>
+      </div>
+      <div class="gs-dock" data-r="dock">
+        <div class="gs-hint" data-r="hint"></div>
+        <div class="gs-hand" data-r="hand"></div>
+      </div>
     </div>
     <div class="gs-over" data-r="over" hidden></div>`;
   root.appendChild(wrap);
@@ -72,43 +85,176 @@ export function mount(root, ctx) {
   let playAsk = 0;              // id of the last "play" ask I saw
   let gsBox = null;             // open go/stop dialog {id, close}
   let hiddenRound = 0;          // round whose result panel was closed
-  let prevFloor = null, prevHand = null, prevMine = null;
-  let lastBy = {}, lastKey = "", lastRound = 0;     // each player's last move (shown on the panels)
-  const anim = new Set();       // cards that just appeared (short entry animation)
+  let prevFloor = null, prevHand = null, prevCaps = null;     // the last state drawn (to see what moved)
+  let lastBy = {}, lastKey = "", lastRound = 0;     // each player's last move (fallback when the view has no lastBy)
+  let handRects = null;         // where my hand cards were when I played (my played card flies from there)
+  let stageT = 0;               // pending second stage of a staged update
   const timers = new Set();
-  const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); };
+  const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); return t; };
   const name = p => (M && M.players[p] ? M.players[p].name : "?");
   const who = p => (M && p === M.me ? L("나", "You") : esc(name(p)));
   /* "Kim's Hongdan" / "your Hongdan" — plain text (escape where used) */
   const own = (q, label) => (M && q === M.me ? L(`나 ${label}`, `your ${label}`) : L(`${name(q)} ${label}`, `${name(q)}'s ${label}`));
   const open = kind => { const a = ctx.myAsk(kind); return a && a.id !== sentId ? a : null; };
   const live = v => ["play", "choose", "gostop"].includes(v.phase);
+  const spec = () => !!M && M.me < 0;                              // spectator: public view, nothing to act on
+  const inReplay = () => !!(M && M.replay) || !!ctx.replay;
 
-  R("mine").onclick = () => { if (M) showCaps(M.me); };
+  R("mine").onclick = () => { const q = +R("mine").dataset.q; if (M && q >= 0) showCaps(q); };
 
   /* ---------------- State ---------------- */
   function update(m) {
     const fresh = m !== M;
+    if (stageT) { clearTimeout(stageT); timers.delete(stageT); stageT = 0; }   // a newer state replaces a staged one
     M = m;
     const v = m.v;
     if (!v || !v.caps) return;
+    let fx = null;
     if (fresh) {
-      const mine = v.caps[m.me] || [];
-      anim.clear();
-      for (const c of v.floor) if (prevFloor && !prevFloor.has(c)) anim.add(c);
-      for (const c of v.hand) if (prevHand && !prevHand.has(c)) anim.add(c);
-      for (const c of mine) if (prevMine && !prevMine.has(c)) anim.add(c);
-      if (!prevFloor) for (const c of v.floor) anim.add(c);
-      prevFloor = new Set(v.floor); prevHand = new Set(v.hand); prevMine = new Set(mine);
-      if (anim.size) later(() => anim.clear(), 800);
       if (v.round !== lastRound) { lastRound = v.round; lastBy = {}; lastKey = ""; }
       if (v.last) { const k = JSON.stringify(v.last); if (k !== lastKey) { lastKey = k; lastBy[v.last.p] = v.last; } }
+      // What moved (for flying cards) — skipped for redraws and replay jumps (ev: [])
+      if (m.ev && m.ev.length && !calm()) fx = moves(m);
+      prevFloor = new Set(v.floor); prevHand = new Set(v.hand); prevCaps = v.caps.map(c => new Set(c));
       events(m);
     }
     if (sel && !v.hand.includes(sel)) sel = null;
     const pa = open("play");
     if (pa && pa.id !== playAsk) { playAsk = pa.id; sel = null; }     // new turn: release a card selected in advance
+    if (fx) animate(fx); else render();
+    if (fresh && (m.ev || []).some(e => (e.type === "play" || e.type === "bonus") && e.p === m.me)) handRects = null;
+    later(onResize, 0);          // the shell may still change the stage's size after this update (status line, replay bar)
+  }
+
+  /* ---------------- Flying cards ---------------- */
+  /* What this update moved: cards played and flipped onto the floor, and each seat's newly captured cards with their source
+     ("floor", "deck" for a flipped bonus pi, "hand" for a bonus pi played from the hand, or a seat number for stolen pi) */
+  function moves(m) {
+    const v = m.v;
+    if (!prevFloor || !prevCaps || prevCaps.length !== v.caps.length) return null;
+    const played = [], flipped = [];
+    let bonusHand = null;
+    for (const e of m.ev) {
+      if (e.type === "deal") return { deal: true };
+      if (e.type === "play") for (const c of e.cards || []) played.push({ c, p: e.p });
+      else if (e.type === "flip" && e.card) flipped.push({ c: e.card, p: e.p, bonus: !!e.bonus });
+      else if (e.type === "bonus" && !e.floor) bonusHand = { c: e.card, p: e.p };
+    }
+    const viaFloor = new Set([...prevFloor, ...played.map(x => x.c), ...flipped.filter(x => !x.bonus).map(x => x.c)]);
+    const caps = [];
+    v.caps.forEach((cap, q) => {
+      for (const c of cap) {
+        if (prevCaps[q].has(c)) continue;
+        let src = null;
+        if (viaFloor.has(c) && !isBonus(c)) src = "floor";
+        else {
+          const r = prevCaps.findIndex(s => s.has(c));
+          if (r >= 0) src = r;
+          else if (flipped.some(x => x.c === c)) src = "deck";
+          else if (bonusHand && bonusHand.c === c) src = "hand";
+        }
+        if (src !== null) caps.push({ c, q, src });
+      }
+    });
+    const onFloor = caps.filter(x => x.src === "floor").map(x => x.c);
+    const drawn = m.me >= 0 && prevHand ? v.hand.filter(c => !prevHand.has(c)) : [];
+    return { played, flipped, caps, drawn, bonusHand, stageFloor: onFloor.length ? sortCards([...v.floor, ...onFloor]) : null };
+  }
+  function animate(fx) {
+    if (fx.deal) { render(); flyDeal(); return; }
+    const incoming = fx.played.length || fx.flipped.some(x => !x.bonus);
+    if (fx.stageFloor && incoming) {
+      // Stage 1: the played / flipped cards land on the floor; stage 2: the captured ones leave it
+      render({ floor: fx.stageFloor, staging: true });
+      flyIn(fx);
+      stageT = later(() => { stageT = 0; finish(fx); }, 620);
+    } else if (fx.stageFloor) finish(fx);              // the captured cards are on the screen already (after a choice)
+    else { render(); flyIn(fx); flyCaps(fx, new Map()); flyDrawn(fx); }
+  }
+  function finish(fx) {
+    const rects = new Map();
+    for (const x of fx.caps) {
+      const e = x.src === "floor" ? floorCard(x.c) : typeof x.src === "number" ? pileCard(x.src, x.c) : null;
+      if (e) rects.set(x.c, e.getBoundingClientRect());
+    }
     render();
+    flyCaps(fx, rects);
+    flyDrawn(fx);
+  }
+  const floorCard = c => R("floor").querySelector(`.gs-fc .hw[data-c="${c}"]`);
+  const pileCard = (q, c) => wrap.querySelector(`.gs-p[data-q="${q}"] .gs-piles .hw[data-c="${c}"]`);
+  const deckEl = () => R("floor").querySelector(".gs-deck");
+  /* A card-sized spot in the middle of a seat's panel (where a played card comes from) */
+  function panelSrc(q) {
+    const p = wrap.querySelector(`.gs-p[data-q="${q}"]`);
+    if (!p) return null;
+    const r = (p.querySelector(".gs-ph") || p).getBoundingClientRect(), z = parseFloat(getComputedStyle(document.body).zoom) || 1;
+    const w = 26 * z, h = 40 * z;
+    return { left: r.left + r.width / 2 - w / 2, top: r.top + r.height / 2 - h / 2, width: w, height: h };
+  }
+  /* fly() sizes the copy like the target; the card's own size variables must follow, or its text keeps the default size */
+  function flyCard(from, to, opt = {}) {
+    if (!from || !to || !ctx.fly) return null;
+    const a = from.getBoundingClientRect ? from.getBoundingClientRect() : from, b = to.getBoundingClientRect();
+    if (!a.width || !b.width) return null;
+    const an = ctx.fly(from, to, { ms: 380, scale: Math.max(.3, Math.min(3, a.width / b.width)), ...opt });
+    const g = an && an.effect && an.effect.target;
+    if (g) { g.style.setProperty("--cw", to.offsetWidth + "px"); g.style.setProperty("--ch", to.offsetHeight + "px"); }
+    return an;
+  }
+  /* Where a captured card lands: its small card in the panel's piles, or a hidden card-sized spot over the matching tile */
+  function capTarget(q, c) {
+    const panel = wrap.querySelector(`.gs-p[data-q="${q}"]`);
+    if (!panel) return null;
+    const mini = panel.querySelector(`.gs-piles .hw[data-c="${c}"]`);
+    if (mini) return { el: mini };
+    const sc = M.v.scores[q], tile = panel.querySelectorAll(".gs-ti")[GROUPS.indexOf(groupOf(c, sc && sc.guk))] || panel;
+    const t = el("div", "hw mini gs-tgt");
+    t.style.left = Math.round(tile.offsetLeft + tile.offsetWidth / 2 - 10) + "px";
+    t.style.top = Math.round(tile.offsetTop + tile.offsetHeight / 2 - 15) + "px";
+    panel.appendChild(t);
+    return { el: t, tmp: true };
+  }
+  function flyIn(fx) {
+    fx.played.forEach((x, i) => {
+      const to = floorCard(x.c);
+      const from = (x.p === M.me && handRects && handRects.get(x.c)) || panelSrc(x.p);
+      if (to) flyCard(from, to, { delay: i * 60 });
+    });
+    let k = 0;
+    const deck = deckEl();
+    for (const x of fx.flipped) {
+      if (x.bonus) continue;
+      const to = floorCard(x.c);
+      if (to) flyCard(deck, to, { ms: 360, delay: (fx.played.length ? 240 : 0) + 140 * k++ });
+    }
+  }
+  function flyCaps(fx, rects) {
+    const deck = deckEl();
+    let i = 0;
+    for (const x of fx.caps) {
+      let from = rects.get(x.c) || null;
+      if (!from) {
+        if (x.src === "deck") from = deck;
+        else if (x.src === "hand") from = (x.q === M.me && handRects && handRects.get(x.c)) || panelSrc(x.q);
+        else if (typeof x.src === "number") from = panelSrc(x.src);
+      }
+      if (!from) continue;
+      const t = capTarget(x.q, x.c);
+      if (!t) continue;
+      const an = flyCard(from, t.el, { html: hwHTML(x.c), ms: 360, delay: 30 + 55 * i++ });
+      if (t.tmp) { if (an) an.finished.then(() => t.el.remove(), () => t.el.remove()); else t.el.remove(); }
+    }
+  }
+  function flyDrawn(fx) {
+    const deck = deckEl();
+    fx.drawn.forEach((c, i) => { const to = R("hand").querySelector(`.hw[data-c="${c}"]`); if (to) flyCard(deck, to, { ms: 360, delay: 120 + 60 * i }); });
+  }
+  /* A new round: the floor and my hand are dealt from the pile */
+  function flyDeal() {
+    const deck = deckEl();
+    let i = 0;
+    for (const h of [...R("floor").querySelectorAll(".gs-fc .hw"), ...R("hand").querySelectorAll(".gs-hc .hw[data-c]")]) flyCard(deck, h, { ms: 340, delay: 40 * i++ });
   }
 
   /* Precompute everything a player would otherwise count in their head */
@@ -196,26 +342,101 @@ export function mount(root, ctx) {
   }
 
   /* ---------------- Drawing ---------------- */
-  function render() {
+  /* opt.floor: draw this floor instead of the view's (first stage of a staged update); opt.staging: no dialogs or results yet */
+  function render(opt = {}) {
     if (!M) return;
-    const v = M.v;
+    const v = M.v, sp = spec(), land = LAND.matches;
     A = analyze(v, M.me);
     const W = wrap.clientWidth || 360, H = wrap.clientHeight || 600;
+    lastW = wrap.clientWidth; lastH = wrap.clientHeight;
+    wrap.classList.toggle("spec", sp);
+    wrap.classList.toggle("land", land);
     wrap.classList.toggle("short", H < 600);
     wrap.classList.toggle("tall", H > 740);
+    wrap.classList.toggle("roomy", land && H >= 560);
     wrap.classList.toggle("p3", v.n >= 3);
-    renderOpps(); renderMine(H); renderHint(); renderOver();
-    const cells = floorCells(v);
-    const lay = layout(W, cells);          // hand and floor share the spare height (both as large as possible)
-    renderHand(lay);
-    renderTable(cells, lay.fl);
+    R("dock").hidden = sp;
+    if (!sp) renderHint();
+    renderOver(opt.staging);
+    renderPanels(land, sp, H);
+    const cells = floorCells(v, opt.floor || v.floor);
+    const lay = layout(W, cells, land, sp);   // hand and floor share the spare height (both as large as possible)
+    if (!sp) renderHand(lay);
+    renderTable(cells, lay.fl, opt.staging);
+    if (opt.staging) return;
     const g = open("gostop");
     if (g) openGoStop(g); else closeGoStop();
   }
 
+  /* Panels with or without each seat's captured cards (piles), as room allows.
+     mode 2: every panel · 1: my panel only · 0: none (tap a panel to see its cards) */
+  function renderPanels(land, sp, H) {
+    const side = R("side"), table = R("table"), v = M.v;
+    const modes = land ? (sp ? [2, 0] : [2, 1, 0]) : sp ? [2, 0] : [H >= 690 ? 1 : 0];
+    // A long hand on a small sideways phone (Matgo: 10 cards): try a narrower panel column (tiles in two rows) to widen the hand
+    const narrow = land && !sp && v.hand.length + (v.flips[M.me] ? 1 : 0) >= 8 && wrap.clientWidth < 900;
+    const tries = [...(narrow ? modes.map(m => [true, m]) : []), ...modes.map(m => [false, m])];
+    wrap.style.setProperty("--pz", "1");
+    let mode = 0;
+    for (let i = 0; i < tries.length; i++) {
+      wrap.classList.toggle("narrow", tries[i][0]);
+      drawPanels(mode = tries[i][1]);
+      if (i === tries.length - 1) break;
+      if (land ? side.scrollHeight <= side.clientHeight + 1 : table.clientHeight >= Math.max(170, H * .36)) break;
+    }
+    // Landscape: scale the panels to the column — up on computers and TVs (readable from the sofa), slightly down when even the
+    // smallest panels don't fit (a replay's controls on a small sideways phone)
+    const used = R("opps").offsetHeight + R("mine").offsetHeight + 4;
+    if (land && used > 4) {
+      const fit = (side.clientHeight - 6) / used;
+      // scaling up keeps the panels' inner width at least their normal minimum (tiles stay readable)
+      const z = fit < 1 ? Math.max(.72, fit) : Math.min(1.45, fit, side.clientWidth / (wrap.classList.contains("narrow") ? 216 : 320));
+      if (z > 1.06 || z < .995) { wrap.style.setProperty("--pz", z.toFixed(3)); drawPanels(mode); }
+    }
+  }
+  function drawPanels(mode) {
+    const v = M.v, me = M.me, sp = me < 0, box = R("opps"), mine = R("mine");
+    const bottom = sp ? 0 : me;                          // spectators: seat 0 in my panel's place, the others on top
+    box.innerHTML = "";
+    for (let k = 1; k < v.n; k++) {
+      const q = (bottom + k) % v.n;
+      const b = el("div", "gs-p gs-opp" + (live(v) && v.turn === q ? " turn" : ""), panelHTML(q));
+      b.dataset.q = q;
+      b.setAttribute("role", "button");
+      b.tabIndex = 0;
+      b.setAttribute("aria-label", L(`${name(q)} 님 먹은 패 보기`, `View ${name(q)}'s captured cards`));
+      b.onclick = () => showCaps(q);
+      box.appendChild(b);
+      if (mode === 2) addPiles(b, q);
+    }
+    mine.className = "gs-p gs-mine" + (live(v) && v.turn === bottom ? " turn" : "");
+    mine.dataset.q = bottom;
+    mine.setAttribute("aria-label", sp ? L(`${name(bottom)} 님 먹은 패 보기`, `View ${name(bottom)}'s captured cards`)
+      : L("내 정보 · 먹은 패 보기", "My info · view captured cards"));
+    mine.innerHTML = panelHTML(bottom);
+    if (mode >= 1) addPiles(mine, bottom);
+  }
+  /* One row of small captured cards per group (gwang · ribbons · animals · pi), overlapped to fit */
+  function addPiles(box, q) {
+    const v = M.v, sc = v.scores[q];
+    const groups = { g: [], t: [], y: [], p: [] };
+    for (const c of v.caps[q]) groups[groupOf(c, sc.guk)].push(c);
+    const piles = el("div", "gs-piles");
+    for (const k of GROUPS) piles.appendChild(el("div", `gs-pc p-${k}`, groups[k].map(c => hwHTML(c, "mini")).join("") || '<span class="gs-faint">—</span>'));
+    box.appendChild(piles);
+    const first = piles.querySelector(".hw"), cw = first ? first.offsetWidth : 20;
+    for (const pc of piles.children) {
+      const cards = pc.querySelectorAll(".hw"), k = cards.length;
+      if (k < 2) continue;
+      const W = pc.clientWidth || 70;
+      const step = Math.min(cw + 2, (W - cw) / (k - 1));
+      for (let i = 1; i < k; i++) cards[i].style.marginLeft = (step - cw) + "px";
+    }
+  }
+
   /* One player's panel (same for me and opponents) */
   function panelHTML(q) {
-    const v = M.v, me = M.me, isMe = q === me, pl = M.players[q] || { name: "?" }, P = A.P[q], sc = P.sc;
+    const v = M.v, me = M.me, isMe = q === me, sp = me < 0, pl = M.players[q] || { name: "?" }, P = A.P[q], sc = P.sc;
     // Row 1: name · status tags · points needed · score
     const tags = [];
     if (pl.kind === "ai") tags.push('<span class="gs-tg ai">AI</span>');
@@ -230,15 +451,16 @@ export function mount(root, ctx) {
       tags.push(`<span class="gs-tg sh" title="${tt}">${ic} ×${2 ** sh.length}</span>`);
     }
     let needT;
-    if (P.stop) needT = isMe ? `<span class="gs-need ok">${L(`스톱 시 +${P.stop.deltas[q]}`, `Stop: +${P.stop.deltas[q]}`)}</span>`
+    if (P.stop) needT = isMe || sp ? `<span class="gs-need ok"${sp ? ` title="${L("지금 스톱하면 받는 점수", "What they collect if they stop now")}"` : ""}>${L(`스톱 시 +${P.stop.deltas[q]}`, `Stop: +${P.stop.deltas[q]}`)}</span>`
       : `<span class="gs-need bad" title="${L("지금 나면 내가 낼 점수", "What you pay if they stop now")}">${L(`지금 나면 나 −${-P.stop.deltas[me] || 0}`, `If they stop: −${-P.stop.deltas[me] || 0}`)}</span>`;
-    else needT = `<span class="gs-need${P.need <= 2 ? (isMe ? " ok" : " warn") : ""}">` +
+    else needT = `<span class="gs-need${P.need <= 2 ? (isMe || sp ? " ok" : " warn") : ""}">` +
       `${v.go[q] ? L(`다음 고/스톱까지 <b>${P.need}</b>점`, `Next stop: <b>${P.need}</b>`) : L(`나기까지 <b>${P.need}</b>점`, `To win: <b>${P.need}</b>`)}</span>`;
+    const nar = wrap.classList.contains("narrow");          // narrow panel column: the points-needed line moves to row 3
     const head = `<div class="gs-ph">${isMe ? "" : avatarHTML(pl.name, q, "sm")}<b class="nm">${isMe ? L("나", "You") : esc(pl.name)}</b>${tags.join("")}` +
-      `<span class="gs-sp"></span>${live(v) ? needT : ""}<span class="gs-score"><b>${sc.total}</b>${L("점", "pt")}</span></div>`;
+      `<span class="gs-sp"></span>${live(v) && !nar ? needT : ""}<span class="gs-score"><b>${sc.total}</b>${L("점", "pt")}</span></div>`;
 
     // Row 2: 8 progress tiles
-    const near = isMe ? "good" : "warn";
+    const near = isMe || sp ? "good" : "warn";
     const bak = L("박", "×2");
     const ti = (label, val, cls, title) => `<div class="gs-ti ${cls}" title="${esc(title || "")}" data-bak="${bak}"><small>${label}</small><b>${val}</b></div>`;
     const t = [];
@@ -263,19 +485,20 @@ export function mount(root, ctx) {
 
     // Row 3: last move · danger · running total
     const cur = v.cur && v.cur.p === q ? v.cur : null;
-    const lm = cur ? null : lastBy[q];
+    const lm = cur ? null : (v.lastBy || lastBy)[q];       // the view keeps every seat's last move (survives a remount)
     let mv;
     if (cur) mv = `${cur.played.length ? cur.played.map(tok).join("") : `<em>${L("뒤집기", "Flip")}</em>`}${cur.flipped.length ? `<i>→</i>${cur.flipped.map(tok).join("")}` : ""}<em>…</em>`;
     else if (lm) mv = moveHTML(lm, me);
     else mv = `<em class="gs-faint">${live(v) ? L("아직 안 냄", "Not played yet") : ""}</em>`;
-    const fresh = (cur || (v.last && lm === lastBy[v.last.p] && v.last.p === q)) ? " fresh" : "";
+    const fresh = (cur || (lm && v.last && v.last.p === q)) ? " fresh" : "";
     const dg = [];
-    const dcls = isMe ? "gs-dg" : "gs-dg opp";
-    if (P.pibak) dg.push(`<span class="${dcls}" title="${isMe ? L("상대가 피로 나면 ×2", "×2 if an opponent wins with pi") : L("내가 피로 나면 ×2", "×2 if you win with pi")}">` +
+    const dcls = isMe || sp ? "gs-dg" : "gs-dg opp";
+    if (P.pibak) dg.push(`<span class="${dcls}" title="${isMe ? L("상대가 피로 나면 ×2", "×2 if an opponent wins with pi")
+      : sp ? L("다른 사람이 피로 나면 ×2", "×2 if someone else wins with pi") : L("내가 피로 나면 ×2", "×2 if you win with pi")}">` +
       `${L(`피박 위험: 피 ${P.lpi}`, `Pibak: ${P.lpi} pi`)}</span>`);
     if (P.gwangbak) dg.push(`<span class="${dcls}" title="${L("광으로 나면 ×2", "×2 if the winner scores with gwang")}">${L("광박 위험", "Gwangbak")}</span>`);
     if (P.meong && isMe) dg.push(`<span class="${dcls}" title="${L("상대 열끗 7장 이상으로 나면 ×2", "×2 if an opponent wins with 7+ animals")}">${L("멍박 주의", "Meongbak")}</span>`);
-    const foot = `<div class="gs-pf"><span class="gs-lm${fresh}">${mv}</span>${dg.join("")}<span class="gs-tot">${L("누적", "Total")} <b>${signed(v.totals[q])}</b></span></div>`;
+    const foot = `<div class="gs-pf"><span class="gs-lm${fresh}">${mv}</span>${dg.join("")}${live(v) && nar ? needT : ""}<span class="gs-tot">${L("누적", "Total")} <b>${signed(v.totals[q])}</b></span></div>`;
     return head + `<div class="gs-tiles">${t.join("")}</div>` + foot;
   }
 
@@ -297,47 +520,10 @@ export function mount(root, ctx) {
     return s;
   }
 
-  function renderOpps() {
-    const v = M.v, me = M.me, box = R("opps");
-    box.innerHTML = "";
-    for (let k = 1; k < v.n; k++) {
-      const q = (me + k) % v.n;
-      const b = el("div", "gs-p gs-opp" + (live(v) && v.turn === q ? " turn" : ""), panelHTML(q));
-      b.setAttribute("role", "button");
-      b.setAttribute("aria-label", L(`${name(q)} 님 먹은 패 보기`, `View ${name(q)}'s captured cards`));
-      b.onclick = () => showCaps(q);
-      box.appendChild(b);
-    }
-  }
-
-  function renderMine(H) {
-    const v = M.v, me = M.me, sc = v.scores[me], box = R("mine");
-    box.className = "gs-p gs-mine" + (live(v) && v.turn === me ? " turn" : "");
-    box.innerHTML = panelHTML(me);
-    if (H < 690 || !v.caps[me].length) return;                     // small screens: tap to see captured cards (tiles have the counts)
-    const groups = { g: [], t: [], y: [], p: [] };
-    for (const c of v.caps[me]) groups[groupOf(c, sc.guk)].push(c);
-    const piles = el("div", "gs-piles");
-    for (const k of GROUPS) {
-      const cs = groups[k];
-      piles.appendChild(el("div", `gs-pc p-${k}`, cs.map(c => hwHTML(c, "mini" + (anim.has(c) ? " in" : ""))).join("") || '<span class="gs-faint">—</span>'));
-    }
-    box.appendChild(piles);
-    // Overlap: shrink the card spacing to fit each pile's width
-    const first = piles.querySelector(".hw"), cw = first ? first.offsetWidth : 20;
-    for (const pc of piles.children) {
-      const cards = pc.querySelectorAll(".hw"), k = cards.length;
-      if (k < 2) continue;
-      const W = pc.clientWidth || 70;
-      const step = Math.min(cw + 2, (W - cw) / (k - 1));
-      for (let i = 1; i < k; i++) cards[i].style.marginLeft = (step - cw) + "px";
-    }
-  }
-
   /* Floor cells: draw pile + month stacks (+ an empty spot where the selected card would land) */
-  function floorCells(v) {
+  function floorCells(v, floor) {
     const byM = new Map();
-    for (const c of v.floor) { const m = monthOf(c); if (!byM.has(m)) byM.set(m, []); byM.get(m).push(c); }
+    for (const c of floor) { const m = monthOf(c); if (!byM.has(m)) byM.set(m, []); byM.get(m).push(c); }
     const selM = sel && !isBonus(sel) ? monthOf(sel) : 0;
     const cells = [{ deck: true, d: 1 }];
     for (const m of [...byM.keys()].sort((a, b) => a - b)) cells.push({ m, cs: byM.get(m), d: byM.get(m).length });
@@ -346,38 +532,46 @@ export function mount(root, ctx) {
   }
 
   /* Choose hand rows · hand card size together with the floor card size so the smaller of the two is as large as possible */
-  function layout(W, cells) {
+  function layout(W, cells, land, sp) {
     const v = M.v, hand = R("hand"), table = R("table");
     hand.style.height = "0px";
     const T0 = table.clientHeight || 300, Wf = table.clientWidth || W - 12;    // felt height with a zero-height hand
+    const HW = (R("dock").clientWidth || W) - 12;                           // room for the hand (the dock's inner width)
+    // Largest floor card: portrait as before; landscape by the felt's width (spectators on a TV get the biggest)
+    const cap = land ? Math.min(sp ? 190 : 140, Math.floor((Wf - 16) / 3.2)) : Math.min(112, Math.floor((W - 28) / 3.4));
+    const minT = parseFloat(getComputedStyle(table).minHeight) || 90;       // the felt never gets shorter than this
     const depths = cells.map(x => x.d);
-    const count = v.hand.length + (v.flips[M.me] ? 1 : 0);
+    const count = sp ? 0 : v.hand.length + (v.flips[M.me] ? 1 : 0);
     const tagH = 14, gap = 5;
-    if (!count) return { rows: 1, per: 1, hc: 40, hh: 44, fl: floorLayout(depths, Wf, T0 - 44, W) };
+    if (!count) { const hh = sp ? 0 : 44; return { rows: 1, per: 1, hc: 40, hh, fl: fixFl(floorLayout(depths, Wf, T0 - hh, cap)) }; }
     let best = null;
     for (let rows = 1; rows <= Math.min(3, count); rows++) {
       const per = Math.ceil(count / rows);
       if (rows > 1 && Math.ceil(count / (rows - 1)) === per) continue;
-      const byW = Math.floor((W - 12 - (per - 1) * gap) / per);
+      const byW = Math.floor((HW - (per - 1) * gap) / per);
       for (let hc = Math.min(byW, 84); hc >= 28; hc -= 2) {
         const hh = rows * (Math.ceil(hc * 1.55) + tagH) + (rows - 1) * gap;
-        const fl = floorLayout(depths, Wf, T0 - hh, W);
+        if (T0 - hh < minT && hc > 28) continue;                              // the hand would push the felt below its minimum
+        const fl = floorLayout(depths, Wf, T0 - hh, cap);
         const s = Math.min(hc, fl.cw) + 0.01 * (hc + fl.cw) - (rows - 1) * 2;     // on a tie, one row reads easier
         if (!best || s > best.s) best = { rows, per, hc, hh, fl, s };
       }
     }
-    if (!best) { const hc = 28; best = { rows: 1, per: count, hc, hh: Math.ceil(hc * 1.55) + tagH, fl: null }; best.fl = floorLayout(depths, Wf, T0 - best.hh, W); }
-    best.fl.cw = Math.max(24, Math.floor(best.fl.cw));
+    if (!best) { const hc = 28; best = { rows: 1, per: count, hc, hh: Math.ceil(hc * 1.55) + tagH, fl: null }; best.fl = floorLayout(depths, Wf, T0 - best.hh, cap); }
+    fixFl(best.fl);
     return best;
   }
+  const fixFl = fl => { fl.cw = Math.max(24, Math.floor(fl.cw)); return fl; };
 
-  function renderTable(cells, FL) {
+  function renderTable(cells, FL, staging) {
     const v = M.v, me = M.me, fl = R("floor");
     const selM = sel && !isBonus(sel) ? monthOf(sel) : 0;
-    const ask = open("choose");
+    const ask = staging ? null : open("choose");
     const opts = ask && v.ch ? v.ch.options : [];
+    const watch = !ask && v.ch && v.phase === "choose" ? v.ch.options : [];   // someone else is choosing: show between which two
     const cur = new Set(v.cur ? [...v.cur.played, ...v.cur.flipped] : []);
     const handM = new Set(v.hand.filter(c => !isBonus(c)).map(monthOf));
+    const sp = me < 0;
     const cw = FL.cw, ch = Math.round(cw * 1.55), off = Math.round(ch * OFFR);
     R("table").style.setProperty("--fw", cw + "px");
     R("table").style.setProperty("--fh", ch + "px");
@@ -396,13 +590,13 @@ export function mount(root, ctx) {
       st.style.height = (ch + (cs.length - 1) * off) + "px";
       cs.forEach((c, i) => {
         const cls = [];
-        if (anim.has(c)) cls.push("in");
         if (mm === selM) cls.push("can");
         if (opts.includes(c)) cls.push("pick");
+        if (watch.includes(c)) cls.push("opt");
         if (cur.has(c)) cls.push("cur");
         const thr = A.threat(c), mn = A.mineNeed(c);
         const d = el("div", "gs-fc", hwHTML(c, cls.join(" ")) +
-          (thr.length ? `<span class="gs-mk bad" title="${esc(L("완성 패: ", "Completes ") + thr.map(t => own(t.q, t.label)).join(", "))}">!</span>`
+          (thr.length ? `<span class="gs-mk ${sp ? "spec" : "bad"}" title="${esc(L("완성 패: ", "Completes ") + thr.map(t => own(t.q, t.label)).join(", "))}">!</span>`
             : mn.length ? `<span class="gs-mk good" title="${esc(L("완성 패: ", "Completes ") + mn.map(t => own(t.q, t.label)).join(", "))}">★</span>` : ""));
         d.style.top = i * off + "px";
         if (opts.includes(c)) { d.classList.add("tap"); d.onclick = () => send({ take: c }, "choose"); }
@@ -430,16 +624,21 @@ export function mount(root, ctx) {
         const note = done.length ? `<em class="gold">${L(`${done.join("·")} 완성 +${delta}`, `${done.join("·")} +${delta}`)}</em>`
           : delta > 0 ? `<em class="gold">${L(`+${delta}점`, `+${ptsEn(delta)}`)}</em>`
           : thr.length ? `<em class="block">${esc(L(`${thr.map(t => own(t.q, t.label)).join(", ")} 막기`, `Blocks ${thr.map(t => own(t.q, t.label)).join(", ")}`))}</em>` : "";
-        const b = el("button", "gs-pbtn", hwHTML(c, "lg") + `<small>${esc(cardName(c))}</small>${note}`);
+        const b = el("button", "gs-pbtn", hwHTML(c) + `<span class="gs-pi"><small>${esc(cardName(c))}</small>${note}</span>`);
         b.onclick = () => send({ take: c }, "choose");
         row.appendChild(b);
       }
+      // The panel sits inside the felt: shrink its cards until it fits (short felts, e.g. 3 players on a 360×640 phone)
+      const maxH = R("table").clientHeight - 14;
+      let w = Math.max(32, Math.min(76, cw + 4));
+      pk.style.setProperty("--pw", w + "px");
+      while (pk.offsetHeight > maxH && w > 30) { w -= 4; pk.style.setProperty("--pw", w + "px"); }
     } else pk.hidden = true;
   }
 
-  /* Floor grid: try different row counts and keep the one with the largest cards */
-  function floorLayout(depths, Wf, Hf, W) {
-    const gx = 6, gy = 8, px = 8, py = 9, cap = Math.min(112, Math.floor((W - 28) / 3.4));
+  /* Floor grid: try different row counts and keep the one with the largest cards (cap: largest card width) */
+  function floorLayout(depths, Wf, Hf, cap) {
+    const gx = 6, gy = 8, px = 8, py = 9;
     let best = null;
     for (let r = 1; r <= Math.min(4, depths.length); r++) {
       const c = Math.ceil(depths.length / r), rows = Math.ceil(depths.length / c);
@@ -474,7 +673,6 @@ export function mount(root, ctx) {
       const cls = [];
       if (c === sel) cls.push("sel");
       if (I.can) cls.push("can");
-      if (anim.has(c)) cls.push("in");
       const sp = I.bomb ? "" : I.shake ? `<span class="gs-sb">${L("흔들", "Shake")}</span>` : "";
       const b = el("button", "gs-hc" + (I.can ? "" : " nm"), hwHTML(c, cls.join(" ")) + sp + `<span class="gs-ht ${I.tcls}">${I.tag || "&nbsp;"}</span>`);
       b.setAttribute("aria-label", cardName(c) + (I.tag ? ` — ${I.tag}` : ""));
@@ -484,7 +682,7 @@ export function mount(root, ctx) {
     if (flips) {
       const b = el("button", "gs-hc gs-flip", `<div class="hw back${ask ? " can" : ""}"><i></i></div><span class="gs-fl">${L("뒤집기", "Flip")}<br>×${flips}</span><span class="gs-ht">&nbsp;</span>`);
       b.setAttribute("aria-label", L("패 뒤집기만 하기", "Flip a card only"));
-      b.onclick = () => { if (open("play")) send({ flip: true }, "play"); else ctx.toast(L("내 차례에 누르세요", "Wait for your turn")); };
+      b.onclick = () => { if (open("play")) send({ flip: true }, "play"); else if (!inReplay()) ctx.toast(L("내 차례에 누르세요", "Wait for your turn")); };
       hand.appendChild(b);
     }
   }
@@ -521,7 +719,8 @@ export function mount(root, ctx) {
       : v.hand.length ? L("<b>내 차례</b> — 낼 카드를 누르세요 (아래 글씨: 먹는 패 · 점수)", "<b>Your turn</b> — tap a card to play (tags below: what it takes · points)")
       : L("<b>내 차례</b> — 「뒤집기」를 누르세요", "<b>Your turn</b> — tap “Flip”");
     else if (sel) t = describe(v, sel);
-    else if (v.turn === me) t = "…";
+    else if (v.turn === me) t = !inReplay() ? "…" : v.phase === "choose" ? L("<b>내 차례</b> — 가져갈 카드 고르는 중", "<b>Your turn</b> — picking a card to take")
+      : v.phase === "gostop" ? L("<b>내 차례</b> — 고/스톱 고민 중", "<b>Your turn</b> — deciding: Go or Stop") : L("<b>내 차례</b>", "<b>Your turn</b>");
     else {
       const nm = esc(name(v.turn));
       t = L(`${nm} 님 ${v.phase === "choose" ? "카드 고르는 중" : v.phase === "gostop" ? "고/스톱 고민 중" : "차례"} — 손패를 눌러 미리 볼 수 있습니다`,
@@ -531,9 +730,9 @@ export function mount(root, ctx) {
   }
 
   /* ---------------- Round result ---------------- */
-  function renderOver() {
+  function renderOver(staging) {
     const v = M.v, box = R("over"), r = v.result;
-    if (!r || !["roundEnd", "over"].includes(v.phase) || hiddenRound === r.round) { box.hidden = true; return; }
+    if (staging || !r || !["roundEnd", "over"].includes(v.phase) || hiddenRound === r.round) { box.hidden = true; return; }
     box.hidden = false;
     box.innerHTML = resultHTML(v, r) + `<div class="gs-ofoot"><small>${v.phase === "over" || v.round >= v.rounds
       ? L("마지막 판이었습니다", "That was the last round") : L("잠시 후 다음 판", "Next round shortly")}</small><button class="btn small">${L("닫기", "Close")}</button></div>`;
@@ -594,6 +793,7 @@ export function mount(root, ctx) {
     ctx.sound.good();
     ctx.modal((box, close) => {
       entry.close = close;
+      box.classList.add("gs-gsm");
       const goN = v.go[me] + 1;
       ctx.head(box, v.go[me] ? L(`${v.go[me]}고 하는 중`, `On ${v.go[me]} Go`) : L("났습니다!", "You scored!"),
         L(`${sc.total}점 — 고? 스톱?`, `${pointsEn(sc.total)} — Go or Stop?`),
@@ -642,14 +842,17 @@ export function mount(root, ctx) {
     for (const c of v.caps[q]) groups[groupOf(c, sc.guk)].push(c);
     const pts = { g: sc.gp, t: sc.tp, y: sc.yp, p: sc.pp };
     ctx.modal(box => {
+      box.classList.add("gs-capm");
       ctx.head(box, L("먹은 패", "Captured cards"), `${q === M.me ? L("나", "You") : esc(name(q))} — ${L(`${sc.total}점`, ptsEn(sc.total))}`,
         sc.items.length ? sc.items.map(([l, p]) => `${esc(loc(l))}${L(` ${p}점`, `: ${p}`)}`).join(" · ") : L("아직 점수가 없습니다", "No points yet"));
+      const grid = el("div", "gs-mgs");
+      box.appendChild(grid);
       for (const k of GROUPS) {
         const cs = groups[k];
         const guk = sc.guk && cs.includes("9a")
           ? ` <small>${L(`(9월 국진을 ${k === "p" ? "쌍피" : "열끗"}로 셈)`, `(Sep gukjin counted as ${k === "p" ? "double pi" : "an animal"})`)}</small>` : "";
         const cnt = k === "p" ? L(`${sc.pi}장 <small>(쌍피 2 · 쓰리피 3)</small>`, `${sc.pi} <small>(double pi 2 · triple pi 3)</small>`) : L(`${cs.length}장`, String(cs.length));
-        box.insertAdjacentHTML("beforeend", `<div class="gs-mg"><div class="gs-mgh">${groupLabel(k)} ${cnt}` +
+        grid.insertAdjacentHTML("beforeend", `<div class="gs-mg"><div class="gs-mgh">${groupLabel(k)} ${cnt}` +
           ` · <b>${L(`${pts[k]}점`, ptsEn(pts[k]))}</b>${guk}</div>` +
           `<div class="gs-mgc">${cs.map(c => hwHTML(c, "md")).join("") || `<span class="gs-faint">${L("없음", "None")}</span>`}</div></div>`);
       }
@@ -659,6 +862,7 @@ export function mount(root, ctx) {
   /* ---------------- Sending actions ---------------- */
   function tap(c) {
     if (sel !== c) { sel = c; render(); return; }
+    if (inReplay()) { sel = null; render(); return; }                // replays: a tap only previews
     if (!open("play")) { ctx.toast(L("아직 내 차례가 아닙니다", "It's not your turn yet")); return; }
     play(c);
   }
@@ -689,7 +893,11 @@ export function mount(root, ctx) {
   function send(a, kind) {
     const ask = open(kind);
     if (!ask) return false;
+    // Remember where my hand cards are: the card I play flies from there once the new state arrives
+    const rects = new Map();
+    if (kind === "play") for (const h of R("hand").querySelectorAll(".gs-hc .hw[data-c]")) rects.set(h.dataset.c, h.getBoundingClientRect());
     if (!ctx.send(a)) return false;
+    if (kind === "play") handRects = rects;
     sentId = ask.id; sel = null;
     render();
     return true;
@@ -704,7 +912,8 @@ export function mount(root, ctx) {
     bannerT = setTimeout(() => { b.innerHTML = ""; }, 1500);
   }
   function events(m) {
-    const me = m.me, S = ctx.sound;
+    const me = m.me, S = ctx.sound, sp = me < 0;
+    const good = p => p === me || sp;                  // spectators cheer for everyone
     for (const e of m.ev || []) {
       if (e.type === "deal") S.deal();
       else if (e.type === "play") S.place();
@@ -719,23 +928,31 @@ export function mount(root, ctx) {
           if (e.p === me) ctx.buzz(40);
         }
       } else if (e.type === "go") { banner(L(`${e.go}고!`, `${e.go} Go!`), "go"); S.chip(); }
-      else if (e.type === "roundEnd") { banner(e.winner === me ? L("스톱! 승리", "Stop! You win") : L("스톱!", "Stop!"), e.winner === me ? "good" : "bad"); later(() => (e.winner === me ? S.good() : S.bad()), 300); }
+      else if (e.type === "roundEnd") {
+        banner(e.winner === me ? L("스톱! 승리", "Stop! You win") : sp ? L(`${name(e.winner)} 스톱!`, `${name(e.winner)} stops!`) : L("스톱!", "Stop!"), good(e.winner) ? "good" : "bad");
+        later(() => (good(e.winner) ? S.good() : S.bad()), 300);
+      }
       else if (e.type === "nagari") { banner(L("나가리", "Nagari"), ""); S.pass(); }
-      else if (e.type === "chongtong") { banner(L("총통!", "Chongtong!"), e.p === me ? "good" : "bad"); later(() => (e.p === me ? S.good() : S.bad()), 300); }
+      else if (e.type === "chongtong") { banner(L("총통!", "Chongtong!"), good(e.p) ? "good" : "bad"); later(() => (good(e.p) ? S.good() : S.bad()), 300); }
     }
   }
 
+  /* Redraw when the stage changes size (window resize, rotation, or the page zoom of the screen-size setting) */
   let lastW = 0, lastH = 0;
   function onResize() {
     const w = wrap.clientWidth, h = wrap.clientHeight;
-    if (w !== lastW || h !== lastH) { lastW = w; lastH = h; render(); }
+    if (w !== lastW || h !== lastH) { lastW = w; lastH = h; if (M) render(); }
   }
+  const ro = typeof ResizeObserver === "function" ? new ResizeObserver(onResize) : null;
+  if (ro) ro.observe(wrap);
   window.addEventListener("resize", onResize);
 
   return {
     update,
     ticker: false,                 // each panel shows the last move directly
+    landscape: true,               // own sideways layout (style.css)
     destroy() {
+      if (ro) ro.disconnect();
       window.removeEventListener("resize", onResize);
       for (const t of timers) clearTimeout(t);
       clearTimeout(bannerT);

@@ -293,6 +293,77 @@
 .gm-dmodal p{margin-bottom:8px}
 .gm-dleft b{color:var(--gold2)}
 
+/* ---------- Two-line seat rows (spectators, roomy landscape): name and status on top; colours, reserved cards and nobles below ---------- */
+.gm-opp.rich{display:grid; grid-template-columns:auto minmax(0,1fr); grid-template-rows:auto auto; align-content:center; column-gap:8px; row-gap:3px; padding:3px 8px 3px 6px}
+.gm-rl{grid-row:1 / span 2; display:flex; flex-direction:column; align-items:center; gap:4px}
+.gm-rl .gm-opt{font-size:calc(21px * var(--fs))}
+.gm-r1{display:flex; align-items:center; gap:6px; min-width:0}
+.gm-r1 .gm-l1{flex:0 1 auto; min-width:0}
+.gm-r1 .gm-l2{flex:1 1 0; min-width:0; text-align:right}
+.gm-r2{display:flex; align-items:center; gap:8px; min-width:0}
+.gm-opp.rich .gm-ocols{gap:3px}
+.gm-opp.rich .gm-oc{width:20px}
+.gm-opp.rich .gm-oc .gm-bon{width:20px; height:16px; font-size:11px}
+.gm-opp.rich .gm-tk{width:18px; height:18px; font-size:11px}
+.gm-ores.rich{flex-direction:row; align-items:center; gap:3px; min-width:0}
+.gm-ores.rich .gm-rslot{flex:0 0 auto}
+.gm-onob{flex:0 0 auto; font-size:16px; line-height:1; white-space:nowrap; filter:drop-shadow(0 1px 1px rgba(0,0,0,.5))}
+.gm-onob small{font-size:11px; font-weight:800; color:var(--gold2)}
+
+/* ---------- Spectators ---------- */
+.gm-spec .gm-dock{padding-top:4px; padding-bottom:calc(5px + env(safe-area-inset-bottom,0px))}
+.gm-spec .gm-bar{height:auto; min-height:30px; margin:0}
+.gm-spec .gm-hint{text-align:center}
+.gm-noble.spec .gm-nop{flex-wrap:wrap; column-gap:4px; row-gap:2px}
+/* who could buy this card now (avatars) */
+.gm-tag2.who{display:flex; align-items:center; padding:2px 4px; line-height:1; background:rgba(16,28,21,.85); border:1px solid rgba(255,255,255,.28); box-shadow:0 1px 3px rgba(0,0,0,.45)}
+.gm-tag2.who .av{--avs:clamp(14px, calc(var(--cw, 62px) * .22), 30px); width:var(--avs); height:var(--avs); font-size:calc(var(--avs) * .55); box-shadow:0 0 0 1.5px rgba(16,28,21,.95)}
+.gm-tag2.who .av + .av{margin-left:-3px}
+.gm-card.some{box-shadow:0 0 0 1.5px rgba(255,255,255,.4), 0 2px 6px rgba(0,0,0,.45)}
+
+/* ---------- Landscape: felt (card rows + bank column) on the left, side column (seats · nobles · dock) on the right ----------
+   The side column is drawn larger on big screens with zoom (--sz, set by fit() in ui.js). */
+.gm.gm-land{flex-direction:row; align-items:stretch; gap:6px; padding:4px 5px}
+.gm-land .gm-board{flex:0 0 auto; margin:0; flex-direction:row; align-items:center; justify-content:center; gap:6px; padding:4px 6px}
+.gm-land .gm-rows{flex:0 0 auto; align-self:stretch}
+.gm-land .gm-bank{flex-direction:column; height:auto; padding:0; gap:var(--bkg, 4px)}
+.gm-land .gm-side{zoom:var(--sz, 1); flex:1 1 0; min-width:0; display:flex; flex-direction:column; gap:4px}
+.gm-land .gm-opps{flex:1 1 auto; min-height:0; justify-content:space-evenly}
+.gm-land .gm-dock{border:1px solid var(--line); border-radius:12px; padding:5px 7px calc(6px + env(safe-area-inset-bottom,0px))}
+.gm-land .gm-card{--dot:min(calc(var(--cw) * .25), calc(var(--chh) * .19), 32px)}
+.gm-land .gm-tag2{font-size:clamp(9px, calc(var(--cw) * .15), 17px)}
+.gm-land .gm-fl{font-size:clamp(10px, calc(var(--cw) * .14), 16px)}
+.gm-land .gm-deck b{font-size:clamp(15px, calc(var(--dw) * .5), 22px)}
+.gm-land .gm-deck small{font-size:clamp(10.5px, calc(var(--dw) * .33), 15px)}
+.gm-land .gm-tok .gm-n{--nb:clamp(19px, calc(var(--tks) * .46), 30px); min-width:var(--nb); height:var(--nb); line-height:calc(var(--nb) - 2px);
+  font-size:clamp(11.5px, calc(var(--tks) * .3), 18px); border-radius:999px}
+
+/* a visiting noble flying to its new owner (ui.js flights()) */
+.gm-nfly{display:grid; place-items:center; border-radius:8px; border:1px solid rgba(255,230,170,.6); background:linear-gradient(160deg,#7a5590,#3b2450); box-shadow:0 2px 8px rgba(0,0,0,.5)}
+.gm-nfly i{font-style:normal; font-size:14px; line-height:1}
+
+/* Sheets and dialogs in landscape: wider, two columns, so they fit a phone held sideways without scrolling */
+@media (orientation:landscape) and (min-aspect-ratio:4/3){
+  .modal.gm-sheet{max-width:min(780px, calc(100vw / var(--zoom) - 24px)); padding:14px 16px calc(10px + env(safe-area-inset-bottom,0px))}
+  .gm-sheet-in.two{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); column-gap:18px; align-items:start}
+  .gm-sheet-in.two .gm-stop{margin-bottom:0}
+  .gm-sheet-in.two .gm-sc2 > :first-child{margin-right:38px}      /* room for the close button */
+  .gm-sheet-in.two .gm-sc2 > .gm-sec:first-child{margin-top:4px}
+  .gm-sheet-in.two .gm-sbtns{margin-top:10px}
+  .modal.gm-dmodal, .modal.gm-nmodal{max-width:min(700px, calc(100vw / var(--zoom) - 24px)); padding:14px 16px 12px}
+  .gm-dmodal h2, .gm-nmodal h2{margin:2px 0 4px; font-size:18px}
+  .gm-dmodal p, .gm-nmodal p{margin-bottom:6px}
+  .gm-dmodal .gm-disc{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:5px}
+  .gm-dmodal .gm-drow{gap:4px; padding:2px 4px}
+  .gm-dmodal .gm-step{width:36px}
+  .gm-dmodal .gm-dn{min-width:18px}
+  .gm-dmodal .gm-dname{min-width:0; font-size:13px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis}
+  .gm-dmodal .gm-dname small{display:none}
+  .gm-dmodal .gm-dleft{margin-top:4px}
+  .gm-dmodal .row{margin-top:6px}
+  .gm-nmodal .choices{display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr))}
+}
+
 @keyframes gmPop{from{transform:translateY(-14px) scale(.85); opacity:0}}
 @keyframes gmUp{from{transform:translateY(40px); opacity:0}}
 @keyframes gmPulse{0%{transform:scale(1)} 35%{transform:scale(1.2); box-shadow:0 0 0 4px rgba(245,220,148,.7), 0 0 16px rgba(245,220,148,.8)} 100%{transform:scale(1)}}

@@ -1,7 +1,11 @@
 /* Gold Mine screen — top: name-chip grid (max 2 rows) · my info line · cells left to each goal
    middle: tunnel board (auto-fit to the free area · drag to pan · −/+) · leftover height below it shows this round's log
    bottom: my hand (spot counts · reasons a card can't be played) and buttons. The game shows its own history,
-   so the one-line ticker at the top is turned off. */
+   so the one-line ticker at the top is turned off.
+   Landscape (phones held sideways, computers, TVs): name chips in one row on top, the board on the left, and a side
+   column with my info line, cells left to each goal, the log and my hand.
+   Spectators (me = -1, watching screens): no role, hand or buttons — the board and every seat's public info get the room.
+   Replays: nothing to act on (no hand selection, no buttons, no dialogs). */
 import { L, loc } from "../../core/i18n.js";
 import { GOAL_NAME, TOOL_ICON, TOOL_NAME, ROLE_NAME, josa, cardNameTx } from "./engine.js";
 
@@ -9,7 +13,8 @@ const goalN = g => loc(GOAL_NAME[g]);           // "1번" / "#1" — numbers, no
 const toolN = t => loc(TOOL_NAME[t]);
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 const ZF = [1, 1.3, 1.65, 2.1];                 // zoom steps, multiplied with the fitted size
-const CS_MIN = 26, CS_MAX = 72;                 // cell size (px) — if the fit is smaller, the board is panned
+const CS_MIN = 26, CS_MAX = 72, CS_MAX_LAND = 120;   // cell size (px) — if the fit is smaller, the board is panned
+const LANDQ = "(orientation: landscape) and (min-aspect-ratio: 4/3)";   // same query as the landscape CSS
 const LIM = { x0: -4, x1: 12, y0: -5, y1: 5 };  // the engine's board area
 const rot180 = m => ((m << 2) | (m >> 2)) & 15;
 const tp = m => ((m & 1) << 3) | ((m & 2) << 1) | ((m & 4) >> 1) | ((m & 8) >> 3);   // vertical board: N↔W · E↔S (diagonal flip)
@@ -72,6 +77,11 @@ export function mount(root, ctx) {
   let overHidden = false;
   let busy = false;
   const seen = new WeakSet();    // event batches that already played sounds / animations
+  let flyFrom = null;            // {rect, t} of the hand card I just played — saved before sending (the redraw removes it)
+  let prevHand = null, prevDeck = null;   // my hand ids · deck size at the last update (to spot drawn cards)
+  let vertLand = null;           // layout (landscape or not) when the board orientation was decided
+  let curCs = 34;                // current cell size (px) — for flying cards
+  const land = () => window.matchMedia(LANDQ).matches;
 
   /* ---------- What the selected card can do now ---------- */
   const myTurn = () => !!(last && ctx.myAsk("turn") && last.v.phase === "play");
@@ -115,7 +125,9 @@ export function mount(root, ctx) {
 
   function send(a) {
     if (busy) return;
-    if (ctx.send(a)) { busy = true; sel = null; ghost = null; setTimeout(() => { busy = false; }, 600); }
+    const card = sel !== null ? R("hand").querySelector(`[data-id="${sel}"]`) : null;
+    const rect = card ? card.getBoundingClientRect() : null;
+    if (ctx.send(a)) { flyFrom = rect ? { rect, t: Date.now() } : null; busy = true; sel = null; ghost = null; setTimeout(() => { busy = false; }, 600); }
     if (last) render(last, null);
   }
 
@@ -158,16 +170,18 @@ export function mount(root, ctx) {
       if (e.p !== undefined) marks.acted.add(e.p);
       if (e.type === "path") { marks.fresh.add(e.x + "," + e.y); ctx.sound.place(); }
       else if (e.type === "reveal") { marks.flip.add(e.x + "," + e.y); e.gold ? ctx.sound.good() : ctx.sound.flip(); }
-      else if (e.type === "break") { marks.hit.add(e.target); if (e.target === me) { ctx.sound.bad(); ctx.buzz(120); } else ctx.sound.chip(); }
+      else if (e.type === "break") { marks.hit.add(e.target); if (e.target === me) { ctx.sound.bad(); if (!m.replay) ctx.buzz(120); } else ctx.sound.chip(); }
       else if (e.type === "repair") { marks.hit.add(e.target); e.target === me ? ctx.sound.good() : ctx.sound.chip(); }
       else if (e.type === "rock") { marks.dust.push([e.x, e.y]); ctx.sound.pass(); }
       else if (e.type === "discard") ctx.sound.deal();
       else if (e.type === "map") {
-        if (e.p === me && e.gold !== undefined) peekModal(e.goal, e.gold);
+        // only the live player gets the dialog — a replay just shows the 👁 mark on the goal
+        if (e.p === me && e.gold !== undefined && !m.replay) peekModal(e.goal, e.gold);
         else ctx.sound.flip();
       } else if (e.type === "round") {
         overHidden = false;
-        if (e.round < m.v.rounds) (e.roles[me] === e.winner) ? ctx.sound.win() : ctx.sound.lose();   // after the last round the results window plays the sound
+        // after the last round the results window plays the sound
+        if (e.round < m.v.rounds) me < 0 ? ctx.sound.good() : (e.roles[me] === e.winner) ? ctx.sound.win() : ctx.sound.lose();
       } else if (e.type === "newround") { roleOpen = false; overHidden = false; sel = null; ghost = null; zoomI = 0; ctx.sound.deal(); }
     }
     return marks;
@@ -189,9 +203,11 @@ export function mount(root, ctx) {
     const pickable = new Set();
     if (mt && c && c.t === "break") breakTargets(v, c).forEach(p => pickable.add(p));
     if (mt && c && c.t === "fix") fixTargets(v, c).forEach(o => pickable.add(o.p));
-    const cols = v.n <= 5 ? v.n : Math.ceil(v.n / 2);   // two rows from 6 players
+    // Portrait: one row up to 5 players, two rows from 6. Landscape: always one row (height is what's scarce)
+    const cols = land() || v.n <= 5 ? v.n : Math.ceil(v.n / 2);
     box.style.setProperty("--cols", cols);
-    box.classList.toggle("tight", cols >= 5);
+    const tight = cols >= 5 && (box.clientWidth || 360) / cols < 110;   // narrow chips: shorter badges
+    box.classList.toggle("tight", tight);
     box.innerHTML = "";
     m.players.forEach((pl, p) => {
       const broken = v.broken[p];
@@ -200,8 +216,8 @@ export function mount(root, ctx) {
         + (marks && marks.acted.has(p) ? " mn-acted" : ""));
       const tag = pl.kind === "away" ? `<i class="away" title="${L("자리 비움", "Away")}">💤</i>` : pl.kind === "ai" ? '<i class="ai">AI</i>' : "";
       let l3;
-      if (v.roles) l3 = `<span class="mn-rtag ${v.roles[p]}">${roleTag(v.roles[p], cols < 5)}</span>` + (v.res && v.res.gains[p] ? `<b class="mn-gain">+${v.res.gains[p]}</b>` : "");
-      else { const h = lastActOf(v, p); l3 = h ? actHTML(h, cols >= 5 ? 2 : 1) : '<span class="mn-k none">—</span>'; }
+      if (v.roles) l3 = `<span class="mn-rtag ${v.roles[p]}">${roleTag(v.roles[p], !tight)}</span>` + (v.res && v.res.gains[p] ? `<b class="mn-gain">+${v.res.gains[p]}</b>` : "");
+      else { const h = lastActOf(v, p); l3 = h ? actHTML(h, tight ? 2 : 1) : '<span class="mn-k none">—</span>'; }
       const tools = broken.map(t => toolN(t));
       chip.innerHTML = `<span class="l1">${avatarHTML(pl.name, p, "sm mn-av")}<b class="nm">${p === m.me ? meName() : esc(pl.name)}</b>${tag}</span>` +
         `<span class="l2"><span title="${L("손패", "Cards in hand")}">🂠${v.sizes[p]}</span><span class="mn-g" title="${L("모은 금", "Gold collected")}">💰${v.gold[p]}</span>` +
@@ -251,13 +267,25 @@ export function mount(root, ctx) {
 
   /* ---------- My info line · role ---------- */
   function info(m) {
-    const v = m.v, mb = v.broken[m.me];
-    const rb = R("role");
-    rb.className = "mn-role" + (roleOpen ? " open " + v.role : "");
-    rb.innerHTML = roleOpen ? roleTag(v.role, true) : L("🎭 내 역할", "🎭 My role");
-    R("me").innerHTML = (mb.length ? `<span class="mn-mytools bad">${mb.map(t => bk(t)).join("")} ${L("고장", "broken")}</span>` : `<span class="mn-mytools ok">${L("🛠 도구 정상", "🛠 Tools OK")}</span>`) +
-      `<span class="mn-g">💰<b>${v.gold[m.me]}</b></span>` + L(`<span><b>${v.round}</b>/${v.rounds}판</span><span>덱 <b>${v.deck}</b></span>`,
-        `<span>Rd <b>${v.round}</b>/${v.rounds}</span><span>Deck <b>${v.deck}</b></span>`);
+    const v = m.v, rb = R("role");
+    const pub = L(`<span><b>${v.round}</b>/${v.rounds}판</span><span data-r="deck">덱 <b>${v.deck}</b></span>`,
+      `<span>Rd <b>${v.round}</b>/${v.rounds}</span><span data-r="deck">Deck <b>${v.deck}</b></span>`);
+    if (m.me < 0) {
+      // Watching: whose turn (big enough for a TV across the room) and the public counts — no role, no tools of mine
+      rb.hidden = true;
+      const t = v.turn, pl = m.players[t];
+      const now = v.phase === "play" && pl ? `<span class="mn-now">${avatarHTML(pl.name, t, "sm mn-av")}<b>${esc(pl.name)}</b>${L(" 차례", "'s turn")}</span>` : "";
+      R("me").innerHTML = now + pub + `<span>${L(`방해꾼 <b>${sabRange(v)}</b>`, `Traitors <b>${sabRange(v)}</b>`)}</span>`;
+    } else {
+      const mb = v.broken[m.me];
+      rb.hidden = false;
+      rb.className = "mn-role" + (roleOpen ? " open " + v.role : "");
+      // (.mn-long words are dropped on the narrow side column of a phone held sideways — see style.css)
+      rb.innerHTML = roleOpen ? roleTag(v.role, true) : L(`🎭<span class="mn-long"> 내</span> 역할`, `🎭 <span class="mn-long">My </span>role`);
+      R("me").innerHTML = (mb.length ? `<span class="mn-mytools bad">${mb.map(t => bk(t)).join("")}<span class="mn-long"> ${L("고장", "broken")}</span></span>`
+        : `<span class="mn-mytools ok">${L(`🛠<span class="mn-long"> 도구</span> 정상`, `🛠<span class="mn-long"> Tools</span> OK`)}</span>`) +
+        `<span class="mn-g">💰<b>${v.gold[m.me]}</b></span>` + pub;
+    }
     R("res").hidden = !(v.phase !== "play" && overHidden);
   }
   R("role").onclick = () => {
@@ -322,14 +350,22 @@ export function mount(root, ctx) {
     // Cell size: the largest size that fits the whole board × zoom step.
     // Orientation: on a tall screen, turning the board vertical (entrance on top, goals at the bottom) makes cells much
     // bigger. Re-decided only when the device width changes
-    const fw = frame.clientWidth - 4, fh = body.clientHeight - 8;   // board border 4 + gap above the log 4
-    if (vert === null && fw > 0 && fh > 0) vert = Math.min(fw / 5, fh / 10) >= 1.1 * Math.min(fw / 10, fh / 5);   // based on the round-start board (10×5)
+    // Portrait: the board takes its content height and the log the rest below it. Landscape: the board fills its grid
+    // area on the left (the log sits in the side column), always shown horizontally — the screen is wide
+    const ld = land();
+    if (ld !== vertLand) { vert = null; vertLand = ld; }
+    if (ld) mid.style.height = "";
+    const fw = frame.clientWidth - 4, fh = ld ? mid.clientHeight - 4 : body.clientHeight - 8;   // board border 4 + gap above the log 4
+    if (vert === null && fw > 0 && fh > 0) vert = !ld && Math.min(fw / 5, fh / 10) >= 1.1 * Math.min(fw / 10, fh / 5);   // based on the round-start board (10×5)
     const cols = vert ? ey : ex, rows = vert ? ex : ey;
     const fit = fw > 0 && fh > 0 ? Math.floor(Math.min(fw / cols, fh / rows)) : 34;
-    const cs = Math.round(Math.max(CS_MIN, Math.min(CS_MAX, fit)) * ZF[zoomI]);
-    const midH = Math.max(0, Math.min(body.clientHeight - 4, rows * cs + 4));
-    mid.style.height = midH + "px";
-    R("log").hidden = body.clientHeight - midH < 44;   // hide the log when not even one line fits (no cut-off header)
+    const cs = Math.round(Math.max(CS_MIN, Math.min(ld ? CS_MAX_LAND : CS_MAX, fit)) * ZF[zoomI]);
+    curCs = cs;
+    if (!ld) {
+      const midH = Math.max(0, Math.min(body.clientHeight - 4, rows * cs + 4));
+      mid.style.height = midH + "px";
+      R("log").hidden = body.clientHeight - midH < 44;   // hide the log when not even one line fits (no cut-off header)
+    } else R("log").hidden = false;
     // engine coordinates (x, y) → screen cell (on a vertical board x runs down and y runs right)
     const sx = (x, y) => (vert ? y - b.y0 : x - b.x0), sy = (x, y) => (vert ? x - b.x0 : y - b.y0);
     const T = e => (vert ? tp(e) : e);
@@ -367,9 +403,9 @@ export function mount(root, ctx) {
       if (v.last && v.last.x === t.x && v.last.y === t.y && v.last.t === "path") cls += " mn-last";
       if (marks && marks.fresh.has(kk)) cls += " mn-new";
       if (marks && marks.flip.has(kk)) cls += " mn-flip";
-      h += `<div class="${cls}" style="${pos(t.x, t.y)}">${inner}</div>`;
+      h += `<div class="${cls}" style="${pos(t.x, t.y)}" data-cell="${kk}">${inner}</div>`;
     }
-    if (marks) for (const [x, y] of marks.dust) h += `<div class="mn-c mn-dust" style="${pos(x, y)}"></div>`;
+    if (marks) for (const [x, y] of marks.dust) h += `<div class="mn-c mn-dust" style="${pos(x, y)}" data-dust="${x},${y}"></div>`;
     // Cells to tap for the selected card (a faint preview on others' turns)
     if (c && v.phase === "play") {
       const pre = mt ? "" : " pre";
@@ -456,12 +492,26 @@ export function mount(root, ctx) {
       if (no) b.insertAdjacentHTML("beforeend", `<em class="mn-why">${no[0]}</em>`);
       else if (c.t === "path" && v.phase === "play") b.insertAdjacentHTML("beforeend", `<em class="mn-cnt" title="${L("놓을 수 있는 자리", "Legal spots")}">${spotCount(v, c)}</em>`);
       b.setAttribute("aria-label", loc(cardNameTx(c)) + (no ? ` — ${no[0]}` : ""));
+      b.dataset.id = c.id;
       b.onclick = () => pickCard(c.id);
       box.appendChild(b);
     }
   }
+  /* Landscape: the side column (info · goals · hint · hand · buttons) must fit the short height of a phone held
+     sideways, even under a replay bar — shrink the hand cards by what doesn't fit */
+  function fitHand() {
+    const hb = R("hand");
+    hb.style.removeProperty("--cwmax");
+    if (!land()) return;
+    const side = wrap.clientHeight - R("seats").offsetHeight;
+    const used = wrap.querySelector(".mn-bar").offsetHeight + wrap.querySelector(".mn-goals").offsetHeight + wrap.querySelector(".mn-dock").offsetHeight;
+    const card = hb.querySelector(".mn-card");
+    if (used <= side || !card) return;
+    const w = Math.floor((card.offsetHeight - (used - side) - 1) * 50 / 66);
+    hb.style.setProperty("--cwmax", Math.max(28, Math.min(66, w)) + "px");
+  }
   function pickCard(id) {
-    if (!last || last.v.phase !== "play") return;
+    if (!last || last.v.phase !== "play" || last.replay) return;   // a replay only shows the hand
     if (sel === id) { sel = null; ghost = null; }
     else {
       sel = id; ghost = null;
@@ -485,8 +535,13 @@ export function mount(root, ctx) {
     };
     const no = c ? why(v, c) : null;
     const ROT = L("↻ 회전", "↻ Rotate"), DIS = L("버리기", "Discard");
+    acts.hidden = !!m.replay;                         // a replay has nothing to press
     if (v.phase !== "play") hint = v.phase === "end" ? L("라운드 끝 — 잠시 뒤 다음 라운드가 시작됩니다", "Round over — the next round starts shortly") : L("게임 끝", "Game over");
-    else if (!mt) {
+    else if (m.replay) {
+      const who = esc(nm[v.turn]);
+      hint = L(`🎬 <b>${who}</b> 님 차례`, `🎬 <b>${who}</b>'s turn`);
+      if (brokenMe(v)) hint += L(" · 이 사람의 도구가 고장 나 있습니다", " · this player's tools are broken");
+    } else if (!mt) {
       const who = esc(nm[v.turn]);
       hint = L(`<b>${who}</b> 님 차례`, `<b>${who}</b>'s turn`) + (c ? (no ? ` · ${no[1]}` : c.t === "path" ? L(` · 미리 보기: 놓을 자리 <b>${spotCount(v, c)}</b>곳`, ` · Preview: <b>${spotCount(v, c)}</b> spots`)
         : L(" · 카드를 골라 두었어요", " · Card selected"))
@@ -566,8 +621,11 @@ export function mount(root, ctx) {
 
   /* ---------- Drawing ---------- */
   function render(m, marks) {
+    const sp = m.me < 0;
+    wrap.classList.toggle("spec", sp);
+    wrap.classList.toggle("rp", !!m.replay);
     // Tidy the selection: drop it outside a round or if the card left the hand. On others' turns only preview (no cell pick)
-    if (m.v.phase !== "play") { sel = null; ghost = null; }
+    if (m.v.phase !== "play" || m.replay || sp) { sel = null; ghost = null; }
     if (!myTurn()) ghost = null;
     const c = selCard();
     if (sel !== null && !c) { sel = null; ghost = null; }
@@ -576,12 +634,18 @@ export function mount(root, ctx) {
         : c.t === "rock" ? rockCells(m.v).some(t => t.x === ghost.x && t.y === ghost.y) : false;
       if (!okSpot) ghost = null;
     }
-    // The board size comes from the remaining height, so draw the top and bottom first
-    seats(m, marks); info(m); goalsLine(m); hand(m); dock(m); logPanel(m);
+    // The board size comes from the remaining height, so draw the top and bottom first (spectators have no hand or dock)
+    seats(m, marks); info(m); goalsLine(m);
+    if (!sp) { hand(m); dock(m); }
+    logPanel(m);
     const was = vert;
     board(m, marks);
-    if (vert !== was) hand(m);                 // once the board orientation is known, draw hand tiles the same way
+    if (!sp && vert !== was) hand(m);          // once the board orientation is known, draw hand tiles the same way
+    if (!sp) fitHand();
     overlay(m);
+    // Landscape: the log has its own row in the side column — hide it when not even its header fits
+    const lg = R("log");
+    lg.style.visibility = land() && lg.clientHeight < 40 ? "hidden" : "";
   }
   function update(m) {
     last = m;
@@ -589,6 +653,75 @@ export function mount(root, ctx) {
     if (m.ev && m.ev.length && !seen.has(m.ev)) { seen.add(m.ev); marks = effects(m); }
     busy = false;
     render(m, marks);
+    if (marks) try { flights(m); } catch (e) { console.error(e); }
+    prevHand = m.v.hand.map(c => c.id);
+    prevDeck = m.v.deck;
+  }
+
+  /* ---------- Flying cards (only for new events — never on re-renders or replay jumps) ----------
+     a tunnel card: from the player's chip (or the card I tapped) to its cell · a map: to the goal · a rockfall: to the
+     collapsed cell · broken-tool and repair cards: to the target's chip · drawn cards: from the deck to my hand
+     (or face down to the player's chip) */
+  const flyCard = (html, cls, size) => `<span class="mn-fc ${cls || ""}"${size ? ` style="font-size:${size}px"` : ""}>${html}</span>`;
+  function toChip(src, p, html, opt = {}) {
+    const chip = R("seats").children[p];
+    if (!chip || !src) return;
+    const pad = el("span", "mn-pad");               // invisible landing spot in the middle of the chip
+    chip.appendChild(pad);
+    const hit = opt.hit && chip.classList.contains("mn-hit");
+    if (hit) chip.classList.remove("mn-hit");       // the chip shakes when the card lands, not before
+    const a = ctx.fly(src, pad, { html, ...opt });
+    const rm = () => pad.remove();
+    const shake = () => { if (hit) { chip.classList.remove("mn-hit"); void chip.offsetWidth; chip.classList.add("mn-hit"); } };
+    if (!a) { rm(); shake(); return; }
+    a.finished.then(() => { rm(); shake(); }, rm);
+  }
+  function flights(m) {
+    if (!ctx.fly || document.hidden) return;         // a hidden page doesn't animate: no ghosts piling up
+    const me = m.me, v = m.v, grid = R("grid"), chips = R("seats").children, deck = R("deck");
+    const fr = R("frame").getBoundingClientRect();
+    const inFrame = t => {                          // a cell scrolled out of the board frame gets no flight
+      if (!t) return false;
+      const r = t.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      return cx > fr.left && cx < fr.right && cy > fr.top && cy < fr.bottom;
+    };
+    const mine = flyFrom && Date.now() - flyFrom.t < 5000 ? flyFrom.rect : null;
+    const drew = prevDeck !== null && v.deck < prevDeck;
+    const icon = Math.round(curCs * .5);
+    let acted = false;
+    for (const e of m.ev) {
+      if (e.p === undefined || !["path", "rock", "map", "break", "repair", "discard"].includes(e.type)) continue;
+      acted = true;
+      const fromMe = e.p === me && mine, src = fromMe ? mine : chips[e.p];
+      if (e.p === me) flyFrom = null;
+      if (e.type === "path") {
+        const to = grid.querySelector(`[data-cell="${e.x},${e.y}"]`);
+        if (inFrame(to)) {                          // the flight replaces the pop-in animation
+          to.classList.remove("mn-new");
+          if (!ctx.fly(src, to)) to.classList.add("mn-new");
+        }
+      } else if (e.type === "rock") {
+        const to = grid.querySelector(`[data-dust="${e.x},${e.y}"]`);
+        if (inFrame(to)) ctx.fly(src, to, { html: flyCard("🪨", "rock", icon) });
+      } else if (e.type === "map") {
+        const gl = v.goals[e.goal], to = gl && grid.querySelector(`[data-cell="${gl.x},${gl.y}"]`);
+        if (inFrame(to)) ctx.fly(src, to, { html: flyCard("🗺️", "map", icon) });
+      } else if (e.type === "break" || e.type === "repair") {
+        const html = e.type === "break" ? flyCard(bk(e.tool, true), "break") : flyCard("🔧" + TOOL_ICON[e.tool], "repair");
+        toChip(src, e.target, html, { hit: true, scale: fromMe ? 2 : undefined });
+      }
+      // The card drawn afterwards: someone else's goes face down to their chip (mine is flown into my hand below)
+      if (drew && e.p !== me && deck) toChip(deck, e.p, flyCard("", "back"), { delay: 260, ms: 380 });
+    }
+    // Cards that just arrived in my hand: the draw after my turn, or a fresh deal for a new round
+    if (prevHand && deck && (acted || m.ev.some(e => e.type === "newround"))) {
+      let k = 0;
+      for (const c of v.hand) {
+        if (prevHand.includes(c.id)) continue;
+        const b = R("hand").querySelector(`[data-id="${c.id}"]`);
+        if (b) ctx.fly(deck, b, { delay: 200 + 70 * k++, ms: 380 });
+      }
+    }
   }
 
   function onResize() {
@@ -597,5 +730,18 @@ export function mount(root, ctx) {
   }
   vertW = window.innerWidth;
   window.addEventListener("resize", onResize);
-  return { update, ticker: false, destroy() { window.removeEventListener("resize", onResize); clearTimeout(roleT); root.innerHTML = ""; } };
+  // The shell may also change the page zoom (screen size) without a window resize — redraw when our area changes size
+  let roT = 0, roSize = "";
+  const ro = typeof ResizeObserver === "function" ? new ResizeObserver(() => {
+    const sz = wrap.clientWidth + "x" + wrap.clientHeight;
+    if (sz === roSize) return;
+    roSize = sz;
+    cancelAnimationFrame(roT);
+    roT = requestAnimationFrame(() => { if (last) render(last, null); });
+  }) : null;
+  if (ro) ro.observe(wrap);
+  return {
+    update, ticker: false, landscape: true,
+    destroy() { window.removeEventListener("resize", onResize); if (ro) ro.disconnect(); cancelAnimationFrame(roT); clearTimeout(roleT); root.innerHTML = ""; }
+  };
 }

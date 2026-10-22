@@ -455,6 +455,7 @@ export default {
   icon: "⛏️",
   blurb: tx("굴을 이어 금을 캐세요. 그런데 우리 중에 방해꾼이 숨어 있다!", "Dig a tunnel to the gold. But there's a traitor among us!"),
   players: { min: 3, max: 10, default: 5 },
+  spectate: true,                                       // view(S, -1) is the public table (watching screens · replays)
   settings: [
     { key: "rounds", label: tx("라운드", "Rounds"), values: [1, 3], labels: [tx("1라운드", "1 round"), tx("3라운드", "3 rounds")], default: 3,
       note: tx("라운드마다 역할을 새로 나눕니다", "Roles are dealt again every round") }
@@ -638,7 +639,7 @@ export default {
     return ev;
   },
 
-  /* Only the player who used the map learns what the goal is */
+  /* Only the player who used the map learns what the goal is (spectators, p = -1, never do) */
   filterEvent(ev, p) {
     if (ev.type === "map" && p !== ev.p) { const { gold, ...rest } = ev; return rest; }
     return ev;
@@ -704,10 +705,12 @@ export default {
         legal[c.id] = list;
       }
     }
+    // Whose turn, as a public line (also shown in replays, which have no pending list). The player whose turn it is
+    // gets "" so the shell shows its own "Your turn" only while really playing — never in a replay
     const status = S.phase === "over" ? tx("게임 끝", "Game over")
       : S.phase === "end" ? (S.res.winner === "m" ? tx("광부 승리! 다음 라운드 준비 중", "Miners win! Next round coming up")
         : tx("방해꾼 승리! 다음 라운드 준비 중", "Traitors win! Next round coming up"))
-      : me === S.turn ? tx("내 차례 — 카드 한 장을 내거나 버리세요", "Your turn — play or discard a card") : "";
+      : me === S.turn ? "" : tx(`{${S.turn}} 님 차례`, `{${S.turn}}'s turn`);
     return {
       phase: S.phase, round: S.round, rounds: S.rounds, turn: S.turn, n: S.n,
       deck: S.deck.length, sizes: S.hands.map(h => h.length), broken: S.broken.map(b => b.slice()), gold: S.gold.slice(),
@@ -790,16 +793,21 @@ export default {
     if (total < 0 || total > 4 * S.n * S.rounds) return "gold total out of range";
     return true;
   },
+  /* p = -1: the public view (spectators) — no hand, no role, no peeked goal, no legal spots */
   leak(S, p, v) {
+    const pub = !(p >= 0 && p < S.n);
     if (v.hands || v.peeks || v.hist || Array.isArray(v.deck)) return "hidden-info field visible";
-    const a = S.hands[p].slice().sort((x, y) => x - y).join(), b = (v.hand || []).map(c => c.id).sort((x, y) => x - y).join();
-    if (a !== b) return "cards other than my hand visible";
+    const a = (pub ? [] : S.hands[p]).slice().sort((x, y) => x - y).join(), b = (v.hand || []).map(c => c.id).sort((x, y) => x - y).join();
+    if (a !== b) return pub ? "a hand is visible to spectators" : "cards other than my hand visible";
+    if (pub && (v.role !== null || v.legal)) return "a role or a hand's legal spots visible to spectators";
     if (S.phase === "play") {
       if (v.roles || v.res) return "all roles visible during the round";
-      if (v.role !== S.roles[p]) return "my role is wrong";
+      if (!pub && v.role !== S.roles[p]) return "my role is wrong";
+      const peeks = pub ? [] : S.peeks[p];
       for (let g = 0; g < 3; g++) {
         const gl = S.goals[g];
-        if (gl.rev || S.peeks[p].includes(g)) continue;
+        if (pub && v.goals[g].peek) return `peek mark of goal ${g} visible to spectators`;
+        if (gl.rev || peeks.includes(g)) continue;
         if (v.goals[g].kind !== null) return `identity of unknown goal ${g} visible`;
         const cell = v.board.find(c => c.k === "g" && c.g === g);
         if (!cell || cell.gold !== undefined || cell.e !== undefined) return `shape of hidden goal ${g} visible`;

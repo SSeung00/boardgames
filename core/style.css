@@ -318,6 +318,14 @@ pre.netlog{max-height:50vh; overflow:auto; margin:10px 0 0; padding:10px; border
 .sw-table{width:58px; height:34px; border-radius:17px; background:radial-gradient(ellipse at 50% 40%,var(--a),var(--b)); box-shadow:0 0 0 4px var(--p), 0 0 0 5px rgba(255,255,255,.15)}
 .sw-back{width:26px; height:36px; border-radius:4px; border:2px solid}
 .sw-dot{width:30px; height:30px; border-radius:50%; box-shadow:0 0 0 2px rgba(0,0,0,.3)}
+.set-sub{font-size:12px; color:var(--muted); margin:10px 0 5px}
+.deck-sample{display:flex; justify-content:center; align-items:flex-end; height:62px; padding-top:2px}
+.deck-sample > *{margin:0 -7px; transform:rotate(-5deg)}
+.deck-sample > * + *{transform:rotate(6deg) translateY(2px)}
+.deck-sample .pc{--cw:40px; --ch:57px}
+.deck-sample .pc .pc-corner{font-size:11px} .deck-sample .pc .pc-corner i{font-size:9px} .deck-sample .pc .pc-mid{font-size:21px}
+.deck-sample .dm-card{--cw:40px}
+.deck-sample .hw{--cw:37px; --ch:57px}
 .set-two{display:flex; flex-direction:column; gap:6px}
 .set-app{display:flex; flex-wrap:wrap; gap:8px}
 .prof-prev{display:flex; align-items:center; gap:12px; padding:10px 12px; border-radius:14px; background:rgba(0,0,0,.22); border:1px solid var(--line)}
@@ -349,14 +357,80 @@ table.stats td{padding:6px 4px; border-top:1px solid var(--line); text-align:rig
 .rotate p{margin:0 0 14px; color:var(--muted); font-size:14px}
 .gbtns .langbtn{white-space:nowrap}
 @media (orientation:landscape) and (max-height:520px){
-  body[data-screen="game"]:not(.side-ok) .rotate{display:grid; place-items:center; position:fixed; inset:0; z-index:190; padding:16px; text-align:center;
+  body[data-screen="game"]:not(.side-ok):not(.game-land) .rotate{display:grid; place-items:center; position:fixed; inset:0; z-index:190; padding:16px; text-align:center;
     background:rgba(var(--toastrgb),.95)}
   .gbar{flex-wrap:nowrap; padding-top:calc(3px + env(safe-area-inset-top,0px)); padding-bottom:3px;
     padding-left:calc(10px + env(safe-area-inset-left,0px)); padding-right:calc(10px + env(safe-area-inset-right,0px))}
   .gtitle{flex:0 1 auto; min-height:28px}
   .gstatus{order:0; flex:1 1 auto; min-width:0; padding:0 4px}
   .gbtns .ibtn{width:30px; height:30px; font-size:14px}
+  .gbtns .ibtn.langbtn{width:auto; padding:0 6px; white-space:nowrap}
   .ticker{display:none}
   .stage{padding-left:env(safe-area-inset-left,0px); padding-right:env(safe-area-inset-right,0px)}
   .emotes{top:44px}
 }
+
+/* ---------- Playing-card face designs (core/cards.js adds d-<design>) ----------
+   Sizes stay relative to --cw so the games' own sizing keeps working. Faces only (never .back), and no box-shadow:
+   the games draw selection and highlight rings with it. */
+.pc-rk{display:none}
+/* Big index: one large rank with the suit under it, readable at a glance */
+.pc.pc:not(.back):not(.joker).d-jumbo.d-jumbo .pc-mid, .pc.pc:not(.back).d-jumbo.d-jumbo .pc-corner.br{display:none}
+.pc.pc:not(.back).d-jumbo.d-jumbo .pc-rk{display:flex; position:absolute; inset:18% 0 4% 0; flex-direction:column; align-items:center; justify-content:center; line-height:.95}
+.pc.pc:not(.back).d-jumbo.d-jumbo .pc-rk b{font-size:calc(var(--cw) * .58); font-weight:900; letter-spacing:-.04em}
+.pc.pc:not(.back).d-jumbo.d-jumbo .pc-rk i{font-style:normal; font-size:calc(var(--cw) * .36)}
+.pc.pc:not(.back).d-jumbo.d-jumbo .pc-corner i{display:none}
+/* Four colours: every suit its own colour (spades black, hearts red, diamonds blue, clubs green), corner index on a tinted chip */
+.pc.pc:not(.back).d-four.d-four.s-S{color:#1b1b1b} .pc.pc:not(.back).d-four.d-four.s-H{color:#c8302c} .pc.pc:not(.back).d-four.d-four.s-D{color:#1f5fbf} .pc.pc:not(.back).d-four.d-four.s-C{color:#1b7a3a}
+.pc.pc:not(.back).d-four.d-four{background:#fff; border-color:#c9ccd2}
+.pc.pc:not(.back).d-four.d-four .pc-corner{padding:2px 2px 1px; border-radius:4px; background:color-mix(in srgb, currentColor 12%, transparent)}
+.pc.pc:not(.back).d-four.d-four .pc-mid{font-size:calc(var(--cw) * .56)}
+/* Vintage: aged paper, serif type, a printed double frame and the suit in a medallion */
+.pc.pc:not(.back).d-vintage.d-vintage{font-family:Georgia,"Times New Roman",serif; color:#2e2418; border-color:#8b6b3d;
+  background:radial-gradient(circle at 50% 45%, #f8edd2 0%, #ecd9b0 70%, #dcc28f 100%);
+}
+.pc.pc:not(.back).d-vintage.d-vintage::before{content:""; position:absolute; inset:calc(var(--cw) * .045); border:1px solid #8b6b3d;
+  border-radius:calc(var(--cw) * .05); pointer-events:none}
+.pc.pc:not(.back).d-vintage.d-vintage.red{color:#8e2a1c}
+.pc.pc:not(.back).d-vintage.d-vintage .pc-mid{inset:22% 18%; border-radius:50%; border:1.5px solid currentColor; opacity:.9}
+.pc.pc:not(.back).d-vintage.d-vintage .pc-corner{font-weight:700}
+/* Neon: a dark face with glowing symbols */
+.pc.pc:not(.back).d-neon.d-neon{background:linear-gradient(160deg,#1a2030,#0c1018); border-color:#34405a; color:#6fe3ff}
+.pc.pc:not(.back).d-neon.d-neon.red{color:#ff5c8a}
+.pc.pc:not(.back).d-neon.d-neon .pc-corner, .pc.pc:not(.back).d-neon.d-neon .pc-mid, .pc.pc:not(.back).d-neon.d-neon .pc-sub{text-shadow:0 0 6px currentColor, 0 0 14px color-mix(in srgb, currentColor 55%, transparent)}
+.pc.pc:not(.back).d-neon.d-neon.joker{color:#d78bff}
+/* Minimal: flat, no second corner, one big suit tucked into the lower right */
+.pc.pc:not(.back).d-minimal.d-minimal{background:#fafafa; border-color:transparent; border-radius:calc(var(--cw) * .14)}
+.pc.pc:not(.back).d-minimal.d-minimal .pc-corner.br{display:none}
+.pc.pc:not(.back).d-minimal.d-minimal .pc-corner{font-family:system-ui,sans-serif; font-weight:900; letter-spacing:-.03em}
+.pc.pc:not(.back).d-minimal.d-minimal .pc-mid{inset:auto -12% -14% auto; width:auto; height:auto; font-size:calc(var(--cw) * .95); opacity:.9; line-height:1}
+.pc.pc:not(.back).d-minimal.d-minimal.joker .pc-mid{inset:0; font-size:calc(var(--cw) * .5)}
+
+/* ---------- Watching screens (TV / tablet) · people waiting · replays ---------- */
+.tvlink{display:block; margin:10px auto 0; font-size:12.5px}
+.specbar{flex:0 0 auto; padding:4px 12px; font-size:12.5px; color:var(--gold2); background:rgba(230,195,106,.1); border-bottom:1px solid rgba(230,195,106,.25); text-align:center}
+.tvcard{display:flex; align-items:center; gap:12px; padding:12px; margin:4px 0 12px; border-radius:14px; background:rgba(0,0,0,.22); border:1px solid var(--line2)}
+.tvcard .tv-ico{font-size:34px}
+.tvcard b{display:block; font-size:17px}
+.tvcard small{color:var(--muted); font-size:12.5px}
+.watchers{margin-top:8px; font-size:12.5px; color:var(--muted)}
+.replaybtn{display:block; margin:12px auto 0}
+body.replaying #bEmote, body.replaying #bMenu, body.replaying #bLog{display:none}
+.replaybar{flex:0 0 auto; padding:5px 8px; background:rgba(0,0,0,.35); border-bottom:1px solid var(--line)}
+.rp-row{display:flex; align-items:center; gap:5px}
+.rp-row .ibtn{width:34px; height:32px; flex:0 0 auto}
+.rp-seek{flex:1; min-width:40px; accent-color:var(--gold)}
+.rp-pos{font-size:11.5px; color:var(--muted); min-width:52px; text-align:right; font-variant-numeric:tabular-nums}
+.rp-speed{font-size:12px !important; font-weight:800}
+.rp-view{margin-top:4px; font-size:12px; color:var(--muted)}
+.rp-seat{flex:1; min-width:0; padding:4px 6px; border-radius:8px; border:1px solid var(--line2); background:rgba(0,0,0,.3); color:var(--ink); font:inherit; font-size:12.5px}
+/* a card flying across the table (ui.js fly()) */
+.flyer{will-change:transform}
+
+/* ---------- Opened inside KakaoTalk ---------- */
+.kakao{margin:0 0 12px; padding:12px 14px; border-radius:13px; background:#fee500; color:#191600; display:flex; flex-direction:column; gap:4px}
+.kakao b{font-size:14.5px}
+.kakao small{font-size:12.5px; line-height:1.45; color:#3a3300}
+.kakao-btns{display:flex; gap:6px; margin-top:4px}
+.kakao .btn{color:#191600; border-color:rgba(0,0,0,.25); background:rgba(255,255,255,.55)}
+.kakao .btn.primary{background:#191600; color:#fee500; border-color:transparent}

@@ -9,8 +9,11 @@ const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 export const net = {
   peer: null, role: null, code: null, hostConn: null, joined: false,
-  /* filled in by app.js */
-  on: { hostReady() { }, connection() { }, message() { }, hostLost() { }, entryError() { }, busy() { } }
+  watch: false,          // joined as a watching screen (TV / tablet): public view, no seat
+  backup: null,          // the saved room, when the host picked me as heir
+  /* filled in by app.js. takeover(): become the host from the backup (true if it started); supplanted(code): someone
+     else now hosts my room (I took too long to come back) */
+  on: { hostReady() { }, connection() { }, message() { }, hostLost() { }, entryError() { }, busy() { }, takeover() { return false; }, supplanted() { } }
 };
 
 /* Identity: one token per browser tab. A reload keeps it (sessionStorage), a new tab or another browser is a new person.
@@ -137,6 +140,8 @@ export async function hostRoom(reopen, tries = 0) {
     nlog("host: error " + (err.type || err.message));
     if (err.type === "unavailable-id") {
       peer.destroy();
+      // I was hosting and the code went to someone else (the heir took over while I was away): join them instead
+      if (net.role === "host" && net.peer === peer) { nlog("host: room taken over by someone else"); return net.on.supplanted(code); }
       if (!reopen) return hostRoom(null);
       if (tries >= 45) {
         stickyToast(null); net.on.busy(false);
@@ -144,7 +149,11 @@ export async function hostRoom(reopen, tries = 0) {
         return;
       }
       stickyToast(L(`방 ${code} 을(를) 다시 여는 중… (최대 2분)`, `Reopening room ${code}… (up to 2 min)`));
-      setTimeout(() => hostRoom(reopen, tries + 1), 3000);
+      // The code is still taken: either my old page hasn't let go yet, or someone else hosts it now (the heir) — in that
+      // case joining works, so try that every other time
+      setTimeout(() => (tries % 2
+        ? joinRoom(code, false, net.name, () => hostRoom(reopen, tries + 1))
+        : hostRoom(reopen, tries + 1)), 3000);
       return;
     }
     if (net.role === "host") { toast(L("연결 서버와 잠시 끊겼습니다. 이미 들어온 사람과의 게임은 계속됩니다.", "Lost the signalling server for a moment. Games with people already in the room continue.")); return; }
@@ -153,12 +162,13 @@ export async function hostRoom(reopen, tries = 0) {
 }
 
 /* quiet: a silent reconnection attempt after a drop.
-   onMissing: called instead of showing an error when nobody is hosting the room (used to reopen my own saved room). */
-export async function joinRoom(code, quiet, name, onMissing) {
+   onMissing: called instead of showing an error when nobody is hosting the room (used to reopen my own saved room).
+   opt.watch: join as a watching screen (TV / tablet) */
+export async function joinRoom(code, quiet, name, onMissing, opt = {}) {
   if (!peerOK()) return;
   code = String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (code.length !== 5) { net.on.entryError(tx("방 코드는 다섯 글자입니다.", "Room codes have five characters.")); return; }
-  if (!quiet) net.on.busy(true);
+  if (!quiet) { net.on.busy(true); net.watch = !!opt.watch; }
   if (name) net.name = name;
   const ice = await iceServers(), relay = hasRelay(ice);
   nlog(`guest: ${quiet ? "rejoin" : "join"} ${code} · relay ${relay ? "on" : "off"}${quiet ? "" : " · " + device()}`);
@@ -168,7 +178,7 @@ export async function joinRoom(code, quiet, name, onMissing) {
     if (opened || failed) return;
     failed = true;
     try { peer.destroy(); } catch (e) { }
-    if (quiet) Rejoin.later();
+    if (quiet) Rejoin.later(missing);
     else if (missing && onMissing) { net.peer = null; net.role = null; net.hostConn = null; onMissing(); }
     else { net.on.busy(false); net.on.entryError(text); }
   };
@@ -196,11 +206,13 @@ export async function joinRoom(code, quiet, name, onMissing) {
       if (failed) return;
       nlog("guest: connected to " + code);
       opened = true; net.joined = true; net.seen = Date.now();
+      net.backup = null;                 // a backup from before is stale; the host sends a fresh one if I'm (still) the heir
       Rejoin.done();
       net.on.busy(false);
       history.replaceState(null, "", "#" + code);
-      rememberRoom(code, "guest");
-      conn.send({ t: "hello", name: net.name, look: prefs.look, token });
+      rememberRoom(code, net.watch ? "watch" : "guest");
+      try { if (sessionStorage.getItem("bg.hosting") === code) sessionStorage.removeItem("bg.hosting"); } catch (e) { }   // someone else hosts it now
+      conn.send({ t: "hello", name: net.name, look: prefs.look, token, watch: net.watch || undefined });
     });
     conn.on("data", msg => {
       if (net.hostConn !== conn) return;
@@ -214,7 +226,8 @@ export async function joinRoom(code, quiet, name, onMissing) {
   peer.on("disconnected", () => { if (opened) try { peer.reconnect(); } catch (e) { } });
   peer.on("error", err => {
     nlog("guest: error " + (err.type || err.message));
-    if (err.type === "peer-unavailable") return fail(tx(`${code} 방을 찾지 못했습니다. 코드를 확인하거나, 방장이 방을 열어 두었는지 확인하세요.`, `Room ${code} not found. Check the code, or make sure the host still has the room open.`), true);
+    // "gone": the signalling server knows no such room — nobody hosts it any more (the heir may take over)
+    if (err.type === "peer-unavailable") return fail(tx(`${code} 방을 찾지 못했습니다. 코드를 확인하거나, 방장이 방을 열어 두었는지 확인하세요.`, `Room ${code} not found. Check the code, or make sure the host still has the room open.`), "gone");
     if (opened) return;
     fail(tx("연결 오류: " + (err.type || err.message), "Connection error: " + (err.type || err.message)));
   });
@@ -226,6 +239,7 @@ export const Rejoin = {
   active: false, tries: 0, timer: 0, since: 0,
   QUICK: [300, 1000, 2000, 3000, 5000, 5000],
   SLOW: 8000, LIMIT: 10 * 60 * 1000,
+  TAKEOVER: 20000,       // the heir reopens the room itself after the host has been gone this long
   start() {
     if (net.role !== "guest" || this.active) return;
     this.active = true; this.tries = 0; this.since = Date.now();
@@ -233,9 +247,14 @@ export const Rejoin = {
     try { if (net.peer) net.peer.destroy(); } catch (e) { }
     this.later();
   },
-  later() {
+  later(missing) {
     if (!this.active) return;
     clearTimeout(this.timer);
+    // Only when the room itself is gone: if the host still holds the code, the problem is my own connection
+    if (net.backup && missing === "gone" && Date.now() - this.since > this.TAKEOVER) {
+      nlog(`guest: host gone for ${Math.round((Date.now() - this.since) / 1000)}s${missing ? " (room missing)" : ""} — I hold the backup`);
+      if (net.on.takeover()) { this.active = false; return; }
+    }
     if (Date.now() - this.since > this.LIMIT) { this.active = false; stickyToast(null); net.on.hostLost(); return; }
     const quick = this.tries < this.QUICK.length;
     stickyToast(quick
@@ -261,6 +280,7 @@ export function sendToHost(msg) { if (net.hostConn && net.hostConn.open) net.hos
 /* bye: tell the host this was on purpose (frees the lobby seat at once instead of waiting for a timeout) */
 export function leaveNet(bye) {
   Rejoin.stop();
+  net.backup = null;
   const peer = net.peer;
   if (bye && net.role === "guest") sendToHost({ t: "bye" });
   setTimeout(() => { try { if (peer) peer.destroy(); } catch (e) { } }, bye ? 250 : 0);

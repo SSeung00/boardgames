@@ -105,15 +105,20 @@ const E = {
   settings: [
     { key: "rounds", label: tx("라운드", "Rounds"), values: [3, 5, 8], labels: [tx("3판", "3"), tx("5판", "5"), tx("8판", "8")], default: 5,
       note: tx("라운드마다 n·n-1·…·1 점. 총점으로 순위", "Each round scores n · n-1 · … · 1 points. Total score decides the ranking") },
+    { key: "passRule", label: tx("패스 규칙", "Passing"), values: ["again", "lock"],
+      labels: [tx("다시 낼 수 있음", "Can play again"), tx("패스하면 그 판 끝", "Pass = out of the trick")], default: "again",
+      note: tx("「패스하면 그 판 끝」: 한 번 패스한 사람은 그 판이 끝날 때까지 낼 수 없습니다",
+        "\"Pass = out of the trick\": once you pass, you can't play again until the trick ends") },
     { key: "assist", label: tx("묶음 도우미", "Jester helper"), values: [true, false], labels: [tx("허용", "On"), tx("끄기", "Off")], default: true,
       note: tx("켜면 숫자 묶음을 누를 때 필요한 광대까지 알아서 붙입니다", "When on, tapping a number also adds the Jesters needed to match") }
   ],
   rules: tx(`<ul>
     <li>카드는 <b>1(달무티)부터 12(농노)까지</b> 숫자만큼 있고(1은 1장, 12는 12장) <b>광대 2장</b>을 더해 80장입니다. <b>숫자가 낮을수록 셉니다.</b></li>
     <li>첫 라운드는 한 장씩 뽑아 <b>가장 낮은 카드를 뽑은 사람</b>부터 앉고 선을 잡습니다.</li>
-    <li>선은 <b>같은 숫자 여러 장</b>을 원하는 만큼 냅니다. 다음 사람은 <b>같은 장수</b>로 <b>더 낮은 숫자</b>를 내거나 패스합니다. 패스해도 다음에 다시 낼 수 있습니다.</li>
+    <li>선은 <b>같은 숫자 여러 장</b>을 원하는 만큼 냅니다. 다음 사람은 <b>같은 장수</b>로 <b>더 낮은 숫자</b>를 내거나 패스합니다. 기본 규칙에서는 패스해도 다음 차례에 다시 낼 수 있습니다.
+      <b>「패스하면 그 판 끝」</b> 규칙을 고르면 한 번 패스한 사람은 그 판이 끝날 때까지 낼 수 없습니다.</li>
     <li><b>광대</b>는 다른 숫자와 함께 내면 그 숫자로 칩니다. 광대만 내면 13(가장 약함)입니다.</li>
-    <li>마지막에 낸 사람을 뺀 모두가 연달아 패스하면 판이 끝나고, 마지막에 낸 사람이 새 판의 선이 됩니다.</li>
+    <li>마지막에 낸 사람을 뺀 모두가 연달아 패스하면 (「패스하면 그 판 끝」 규칙에서는 모두 한 번씩 패스하면) 판이 끝나고, 마지막에 낸 사람이 새 판의 선이 됩니다.</li>
     <li>패를 먼저 턴 순서대로 <b>대달무티 · 소달무티 · 상인 · 소농노 · 대농노</b>가 되고, 그 순서로 다음 라운드에 앉습니다. 점수는 1등 n점, 2등 n-1점 … 꼴찌 1점.</li>
     <li><b>세금</b>(2라운드부터): 대농노는 가장 낮은 숫자 2장을 대달무티에게, 소농노는 1장을 소달무티에게 바칩니다. 달무티는 아무 카드나 같은 장수를 돌려줍니다.</li>
     <li><b>혁명</b>: 카드를 받은 뒤 광대 2장을 모두 가진 사람은 혁명을 선언할 수 있습니다 — 그 라운드 세금이 없어집니다. 대농노가 선언하면 <b>대혁명</b>: 서열이 통째로 뒤집힙니다 (대농노는 항상 선언).</li>
@@ -121,9 +126,10 @@ const E = {
   </ul>`, `<ul>
     <li>Each number from <b>1 (Dalmuti) to 12 (Serf)</b> has that many cards (one 1, twelve 12s), plus <b>2 Jesters</b> — 80 cards in all. <b>Lower numbers are stronger.</b></li>
     <li>In the first round everyone draws one card; seats are taken from <b>the lowest card drawn</b>, and that player leads.</li>
-    <li>The leader plays <b>any number of cards of one number</b>. Each next player plays <b>the same number of cards</b> of a <b>lower number</b>, or passes. Passing doesn't stop you from playing later.</li>
+    <li>The leader plays <b>any number of cards of one number</b>. Each next player plays <b>the same number of cards</b> of a <b>lower number</b>, or passes. With the standard rule, passing doesn't stop you from playing on your next turn.
+      With <b>"Pass = out of the trick"</b>, once you pass you can't play again until the trick ends.</li>
     <li>A <b>Jester</b> played with other cards counts as their number. Jesters played on their own count as 13 (the weakest).</li>
-    <li>When everyone except the last player to play has passed in a row, the trick ends and that player leads the next one.</li>
+    <li>When everyone except the last player to play has passed in a row (with "Pass = out of the trick": once everyone else has passed), the trick ends and that player leads the next one.</li>
     <li>In the order players empty their hands they become <b>Greater Dalmuti · Lesser Dalmuti · Merchant · Lesser Peon · Greater Peon</b>, and they sit in that order next round. Scoring: 1st gets n points, 2nd n-1 … last 1.</li>
     <li><b>Tax</b> (from round 2): the Greater Peon gives their 2 lowest cards to the Greater Dalmuti, and the Lesser Peon gives 1 to the Lesser Dalmuti. The Dalmuti give back the same number of cards of their choice.</li>
     <li><b>Revolution</b>: after the deal, a player holding both Jesters may declare a revolution — there is no tax that round. If the Greater Peon declares it, it is a <b>Great Revolution</b>: the whole ranking is turned upside down (the Greater Peon always declares).</li>
@@ -134,7 +140,7 @@ const E = {
     const rounds = [3, 5, 8].includes(settings.rounds) ? settings.rounds : 5;
     const S = {
       n, rounds, assist: settings.assist !== false,
-      g: R.create({ n, rounds, seed: seed | 0 }),
+      g: R.create({ n, rounds, seed: seed | 0, passLock: settings.passRule === "lock" }),
       draw: null,          // seat draw result {draws:[{p,rank}], order}
       tax: null,           // {pairs:[{peon,lord,k,up,down}], i, stage:"up"|"return", done}
       trickLog: [],        // what happened in the current trick — cleared when the trick ends (fair-play rule)
@@ -321,6 +327,8 @@ const E = {
     return 650 + Math.random() * 550;
   },
 
+  /* p = -1 is the public view (spectators, watching screens, the public replay): an empty hand, no question,
+     no tax contents and the same neutral status line as any uninvolved seat */
   view(S, p) {
     const G = S.g, phase = G.phase === "revolution" ? "tax" : G.phase;
     const me = p >= 0 && p < G.n;
@@ -331,13 +339,13 @@ const E = {
     const tax = S.tax ? {
       i: S.tax.i, stage: S.tax.stage, done: S.tax.done,
       pairs: S.tax.pairs.map(t => {
-        const mine = t.peon === p || t.lord === p;
+        const mine = me && (t.peon === p || t.lord === p);
         return { peon: t.peon, lord: t.lord, k: t.k, upDone: !!t.up, downDone: !!t.down, up: mine && t.up ? t.up.slice() : null, down: mine && t.down ? t.down.slice() : null };
       })
     } : null;
     const turn = G.phase === "play" ? R.current(G) : -1;
     return {
-      me: p, n: G.n, phase, round: Math.min(G.round, G.rounds), rounds: G.rounds, assist: S.assist,
+      me: p, n: G.n, phase, round: Math.min(G.round, G.rounds), rounds: G.rounds, assist: S.assist, passLock: !!G.passLock,
       seats: G.seats.slice(), titles: G.titles.slice(), scores: G.scores.slice(), sizes: sizes(G),
       finish: G.finish.slice(), passed: G.passed.slice(), lastAct: G.lastAct.slice(),
       trick: G.trick ? { ...G.trick } : null, prevTrick: S.prevTrick, trickLog: S.trickLog.slice(),
@@ -348,9 +356,10 @@ const E = {
     };
   },
 
+  /* p = -1 (spectators, the public replay view) is treated like any uninvolved seat: no private events, no tax contents */
   filterEvent(ev, p) {
     if (ev.only !== undefined && ev.only !== p) return null;
-    if (ev.type === "tax" && p !== ev.from && p !== ev.to) return { ...ev, ranks: null };
+    if (ev.type === "tax" && (p < 0 || (p !== ev.from && p !== ev.to))) return { ...ev, ranks: null };
     return ev;
   },
 
@@ -417,20 +426,26 @@ const E = {
 
   leak(S, p, v) {
     const G = S.g;
-    const ALLOWED = ["me", "n", "phase", "round", "rounds", "assist", "seats", "titles", "scores", "sizes", "finish", "passed", "lastAct",
+    const ALLOWED = ["me", "n", "phase", "round", "rounds", "assist", "passLock", "seats", "titles", "scores", "sizes", "finish", "passed", "lastAct",
       "trick", "prevTrick", "trickLog", "turn", "reveal", "draw", "tax", "ask", "hand", "history", "status"];
     for (const k of Object.keys(v)) if (!ALLOWED.includes(k)) return `unknown view key ${k}`;
-    if (JSON.stringify(v.hand) !== JSON.stringify(G.hands[p])) return "my hand differs from the view";
+    if (p < 0) {
+      // public view (spectators): no cards in hand, no question, no tax contents
+      if (!Array.isArray(v.hand) || v.hand.some(x => x !== 0)) return "the public view holds cards";
+      if (v.ask) return "the public view has a question";
+      if (v.me !== -1) return "the public view claims a seat";
+    } else if (JSON.stringify(v.hand) !== JSON.stringify(G.hands[p])) return "my hand differs from the view";
     if (JSON.stringify(v).includes('"hands"') || JSON.stringify(v).includes('"played"')) return "other hands / played-card counts in the view";
     if (v.tax) for (const t of v.tax.pairs) if (t.peon !== p && t.lord !== p && (t.up || t.down)) return "someone else's tax cards are visible";
     if (v.ask) {
       if (v.ask.kind === "revolt" && revoltAsk(S) !== p) return "someone else's revolution question is visible";
       if (v.ask.kind === "return" && (!curTax(S) || curTax(S).lord !== p)) return "someone else's give-back question is visible";
     }
-    if (G.phase === "revolution" && revoltAsk(S) !== p && JSON.stringify(v.status) !== JSON.stringify(PREP_TAX)) return "status line reveals the revolution candidate";
+    if (G.phase === "revolution" && (p < 0 || revoltAsk(S) !== p) && JSON.stringify(v.status) !== JSON.stringify(PREP_TAX)) return "status line reveals the revolution candidate";
     return true;
   },
-  stepLimit: 30000
+  stepLimit: 30000,
+  spectate: true            // view(S, -1) is the public table (no hand, no tax contents, no revolution question)
 };
 
 function statusFor(S, p, turn, ask) {

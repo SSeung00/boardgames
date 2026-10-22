@@ -1,4 +1,5 @@
-/* Poker — cards and text scale with the measured screen height (container units, cqh). No scrolling from 360×640 to 430×932 */
+/* Poker — cards and text scale with the measured screen height (container units, cqh). No scrolling from 360×640 to 430×932.
+   The spectator layout (watching screens, TVs) and the sideways layout (phones held sideways … TVs) are at the end. */
 .pk{height:100%; display:flex; flex-direction:column; container:pk / size}
 
 /* ---------- Opponent panels ---------- */
@@ -17,13 +18,18 @@
 .pk-s2, .pk-s3{display:flex; justify-content:space-between; align-items:center; gap:4px; min-width:0; min-height:calc(var(--fs) * 1.45)}
 .pk-rt2{display:flex; flex:0 0 auto}
 /* One opponent (heads-up): a wide panel with two big cards */
-.pk-opps.c1 .seatchip.pk-seat{display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"s1 hc" "stk hc" "s3 hc" "hist hc"; gap:3px 10px; padding:8px 10px}
-.pk-opps.c1 .pk-s1{grid-area:s1} .pk-opps.c1 .pk-s2{display:contents} .pk-opps.c1 .pk-stk{grid-area:stk} .pk-opps.c1 .pk-hc{grid-area:hc}
-.pk-opps.c1 .pk-s3{grid-area:s3; justify-content:flex-start} .pk-opps.c1 .pk-hist{grid-area:hist}
-.pk-opps.c1 .pk-stk{font-size:calc(var(--fs) * 1.35)}
-.pk-opps.c1 .pk-hc{gap:5px}
+.pk-opps.wide .seatchip.pk-seat{display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"s1 hc" "stk hc" "s3 hc" "hist hc"; gap:3px 10px; padding:8px 10px}
+.pk-opps.wide .pk-s1{grid-area:s1} .pk-opps.wide .pk-s2{display:contents} .pk-opps.wide .pk-stk{grid-area:stk} .pk-opps.wide .pk-hc{grid-area:hc}
+.pk-opps.wide .pk-s3{grid-area:s3; justify-content:flex-start} .pk-opps.wide .pk-hist{grid-area:hist}
+.pk-opps.wide .pk-stk{font-size:calc(var(--fs) * 1.35)}
+.pk-opps.wide .pk-hc{gap:5px}
 .pc.pk-oc{--ch:clamp(54px, 10cqh, 96px); --cw:calc(var(--ch) / 1.4)}
-.pc.pk-oc .pc-corner{font-size:calc(var(--cw) * .3)} .pc.pk-oc .pc-corner i{font-size:calc(var(--cw) * .22)} .pc.pk-oc .pc-mid{font-size:calc(var(--cw) * .5)} .pc.pk-oc .pc-corner.br{display:none}
+.pc.pk-oc .pc-corner{font-size:calc(var(--cw) * .3); top:calc(var(--cw) * .05); left:calc(var(--cw) * .07)} .pc.pk-oc .pc-corner i{font-size:calc(var(--cw) * .22)} .pc.pk-oc .pc-mid{font-size:calc(var(--cw) * .5)} .pc.pk-oc .pc-corner.br{display:none}
+/* Spectator panels with room (two per row): real cards beside the stack */
+.pk-opps.big:not(.wide) .pc.pk-oc{--ch:calc(var(--fs) * 3.3)}
+.pk-opps.big:not(.wide) .pk-hc{gap:4px}
+.pk-opps.big:not(.wide) .pk-stk{font-size:calc(var(--fs) * 1.3)}
+.pk-mini.pk-new, .pc.pk-oc.pk-new{animation:pkFlip .45s ease both}
 /* Per-seat actions this hand — only when there is room */
 .pk-hist{display:none; align-items:center; gap:0 4px; font-size:calc(var(--fs) * .8); color:var(--muted); white-space:nowrap; overflow:hidden; min-width:0; line-height:1.4; border-top:1px solid var(--line); padding-top:2px; margin-top:1px}
 .pk-hist:empty{display:none!important}
@@ -42,6 +48,7 @@
 .pk-seat .nm{flex:1; min-width:0; max-width:none; font-size:var(--fs)}
 .pk-seat .away{font-size:calc(var(--fs) * .78); padding:0 3px}
 .pk-bs{display:flex; gap:2px; flex:0 0 auto}
+.pk-bs2{display:none}
 .pk-stk{font-weight:800; color:var(--gold2); font-variant-numeric:tabular-nums; font-size:calc(var(--fs) * 1.12); white-space:nowrap}
 .pk-hc{display:flex; gap:2px; flex:0 0 auto; justify-content:flex-end}
 .pk-st{min-width:0; overflow:hidden; display:flex}
@@ -72,6 +79,7 @@
 .pk-opps.c4 .pk-b{font-size:8.5px; padding:2px 3px}
 /* Narrow panels: tighter badge and bet chip so short action words ("Raise", "레이즈") fit beside the amount */
 .pk-opps.c4 .pk-s3{gap:2px}
+.pk-opps.c4 .pk-s2{flex-wrap:wrap; row-gap:1px}      /* shown cards drop below the stack instead of being cut off */
 .pk-opps.c4 .pk-ab{padding:0 3px}
 .pk-opps.c4 .pk-bet{padding:0 4px}
 .pk-opps.c4 .pk-b.d{width:14px; height:14px; padding:0}
@@ -80,11 +88,14 @@
 .pk-b{font-style:normal; flex:0 0 auto; font-size:9.5px; font-weight:800; line-height:1; padding:2px 4px; border-radius:6px; background:rgba(255,255,255,.14); color:var(--ink); letter-spacing:.02em}
 .pk-b.d{background:#f4f1e6; color:#1b1b1b; border-radius:50%; width:15px; height:15px; padding:0; display:inline-grid; place-items:center}
 .pk-bet{flex:0 0 auto; font-size:calc(var(--fs, 13px) * .92); font-weight:800; color:#1b1b1b; background:linear-gradient(180deg,var(--gold2),var(--gold)); border-radius:999px; padding:0 6px; line-height:1.4; font-variant-numeric:tabular-nums}
-.pk-bet.pop{animation:pkPop .45s ease}
-@keyframes pkPop{0%{transform:translateY(-8px) scale(1.25); opacity:.2} 100%{transform:none; opacity:1}}
 .pk-back{display:inline-block; width:calc(var(--fs) * .85); height:calc(var(--fs) * 1.2); border-radius:2px; background:var(--bk); border:1px solid #e9d7a8}
 .pk-mini{display:inline-block; font-size:calc(var(--fs, 13px) * .88); font-weight:800; line-height:1; padding:2px 2px; border-radius:3px; background:#fffdf7; color:#1b1b1b; min-width:1.9em; text-align:center}
 .pk-mini.red{color:#c8302c}
+/* Mini labels follow the four-colour and neon card designs */
+html[data-deck="four"] .pk-mini.s-D{color:#1f5fbf} html[data-deck="four"] .pk-mini.s-C{color:#1b7a3a}
+html[data-deck="neon"] .pk-mini{background:#141a26; color:#6fe3ff; box-shadow:inset 0 0 0 1px #34405a}
+html[data-deck="neon"] .pk-mini.red{color:#ff5c8a}
+html[data-deck="neon"] .pk-mini.hl{box-shadow:0 0 0 2px var(--gold2)}
 .pk-mini.hl{box-shadow:0 0 0 2px var(--gold2)}
 .pk-opps.c1 .pk-back{width:calc(var(--fs) * 1.3); height:calc(var(--fs) * 1.8)}
 .pk-opps.c1 .pk-mini{font-size:calc(var(--fs) * 1.05); padding:4px 3px}
@@ -109,6 +120,7 @@
 @keyframes pkFlip{from{transform:translateY(-14px) rotateY(90deg); opacity:0}}
 .pc.pk-hl{box-shadow:0 0 0 3px var(--gold2), 0 0 16px rgba(245,220,148,.65), 0 3px 8px rgba(0,0,0,.4)}
 .pk-board .pc.dim{filter:brightness(.5)}
+.pk-board .pc.dim.d-neon{filter:saturate(.4) brightness(.85); opacity:.5}      /* a dark face would turn black */
 .pk-mid{flex:0 1 auto; min-height:0; width:100%; overflow-y:auto; display:flex; flex-direction:column; align-items:center; gap:4px; -webkit-overflow-scrolling:touch}
 .pk-ended .pk-mid{flex:1 1 auto; justify-content:flex-start}
 .pk-pot{display:flex; align-items:center; gap:7px; font-size:clamp(14px, 5.5cqh, 17px); color:#f4f1e6; padding:3px 14px; border-radius:999px; background:rgba(0,0,0,.32); flex-wrap:wrap; justify-content:center}
@@ -182,9 +194,7 @@
 .pk-many .pk-hole .pc{--ch:clamp(78px, 13.5cqh, 132px)}
 @container pk (max-height:700px){ .pk-ended .pk-hole .pc{--ch:clamp(64px, 11cqh, 140px)} }
 .pk-hole .pc.dim{opacity:.55}
-.pk-hole .pc.pk-deal{animation:pkDeal .4s ease both}
-.pk-hole .pc.pk-deal + .pc.pk-deal{animation-delay:.12s}
-@keyframes pkDeal{from{transform:translateY(-40px) rotate(-8deg); opacity:0}}
+.pk-hole .pc.dim.d-neon{filter:saturate(.4)}
 .pk-nohole{width:134px; text-align:center; color:var(--muted); font-size:13px}
 .pk-mine{flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; font-size:var(--mf)}
 .pk-mystk{display:flex; align-items:center; gap:5px; flex-wrap:wrap}
@@ -245,9 +255,120 @@ button.pk-cc{font:inherit; color:inherit}
 
 /* With the raise panel open, hide the calc row (the panel shows the same numbers). On small screens also shrink my cards and the felt to make room */
 .pk-raising .pk-calc{display:none}
-@container pk (max-height:700px){
-  .pk-raising .pk-hole .pc{--ch:clamp(56px, 9cqh, 92px)}
-  .pk-raising .pk-draw, .pk-raising .pk-log, .pk-raising .pk-info{display:none}
-  .pk-raising .pk-mystk > b{font-size:calc(var(--mf) * 1.3)}
-  .pk-raising .pk-dock .hint{margin:3px 0 4px}
+@media not all and (orientation:landscape) and (min-aspect-ratio:4/3){
+  @container pk (max-height:700px){
+    .pk-raising .pk-hole .pc{--ch:clamp(56px, 9cqh, 92px)}
+    .pk-raising .pk-draw, .pk-raising .pk-log, .pk-raising .pk-info{display:none}
+    .pk-raising .pk-mystk > b{font-size:calc(var(--mf) * 1.3)}
+    .pk-raising .pk-dock .hint{margin:3px 0 4px}
+  }
+}
+
+/* ---------- Spectators (watching screens, TVs, public replays): every seat around the felt, no dock ---------- */
+.pk-opps2{padding:3px 8px 6px}
+.pk-spec .pk-table{margin:2px 8px}
+/* The board grows with the felt (a TV is drawn at about 1350×760) */
+.pk-spec .pk-table{--bgap:clamp(6px, 1.2cqw, 14px)}
+.pk-spec .pk-board{gap:var(--bgap)}
+.pk-spec .pk-table .pk-board .pc, .pk-spec .pk-table .pk-slot{--ch:min(calc((100cqw - 4 * var(--bgap)) / 5 * 1.4), 46cqh, 230px)}
+.pk-spec.pk-ended .pk-table .pk-board .pc, .pk-spec.pk-ended .pk-table .pk-slot{--ch:min(calc((100cqw - 4 * var(--bgap)) / 5 * 1.4), 26cqh, 170px)}
+/* Watching or sideways: the felt's text grows with the felt too (pk-bigfelt) */
+.pk-bigfelt .pk-info, .pk-bigfelt .pk-street{font-size:clamp(12px, 2.7cqh, 18px)}
+.pk-bigfelt .pk-pot{font-size:clamp(14px, 5cqh, 24px); padding:3px 16px}
+.pk-bigfelt .pk-pot b{font-size:clamp(18px, 8cqh, 40px)}
+.pk-bigfelt .pk-chipico{width:clamp(15px, 3.4cqh, 24px); height:clamp(15px, 3.4cqh, 24px)}
+.pk-bigfelt .pk-cur, .pk-bigfelt .pk-side{font-size:clamp(12px, 2.6cqh, 18px)}
+.pk-bigfelt .pk-runout{font-size:clamp(13px, 2.8cqh, 19px)}
+.pk-bigfelt .pk-log{--lgh:calc(clamp(11.5px, 2.5cqh, 17px) * 1.75); max-height:calc(var(--lgh) * 2 + 4px)}
+.pk-bigfelt .pk-lg{font-size:clamp(11.5px, 2.5cqh, 17px); line-height:var(--lgh)}
+.pk-bigfelt .pk-lgst{font-size:clamp(10.5px, 2.2cqh, 15px); line-height:var(--lgh)}
+@container (min-height:300px){ .pk-bigfelt .pk-log{max-height:calc(var(--lgh) * 3 + 8px)} }
+@container (max-height:200px){ .pk-bigfelt .pk-log{max-height:var(--lgh)} }
+@container (min-height:420px){
+  .pk-bigfelt .pk-prow, .pk-bigfelt .pk-show, .pk-bigfelt .pk-nosd, .pk-bigfelt .pk-bust{font-size:clamp(13px, 2.5cqh, 18px)}
+  .pk-bigfelt .pk-hn{font-size:clamp(13px, 2.6cqh, 19px)}
+  .pk-bigfelt .pk-rt{font-size:clamp(12px, 2.3cqh, 16px)}
+  .pk-bigfelt .pk-show{grid-template-columns:auto minmax(0,1fr) auto auto}
+  .pk-bigfelt .pk-show .pc.sm{--cw:clamp(34px, 5.5cqh, 52px); --ch:calc(var(--cw) * 1.4)}
+  .pk-bigfelt .pk-show .pc.sm .pc-corner{font-size:calc(var(--cw) * .32)} .pk-bigfelt .pk-show .pc.sm .pc-corner i{font-size:calc(var(--cw) * .25)}
+  .pk-bigfelt .pk-show .pc.sm .pc-mid{font-size:calc(var(--cw) * .5)}
+}
+
+/* ---------- Sideways (phones held sideways, tablets, computers, TVs) ----------
+   Playing: opponents above the felt on the left, my cards · calc · buttons in a column on the right.
+   Watching: seats in a column on each side of the felt (left column bottom-up, right column top-down = clockwise). */
+@media (orientation:landscape) and (min-aspect-ratio:4/3){
+  .pk{display:grid; grid-template-columns:minmax(0,1fr) clamp(270px, 34%, 430px); grid-template-rows:auto minmax(0,1fr);
+    grid-template-areas:"opps dock" "table dock"}
+  .pk > .pk-opps{grid-area:opps; padding:5px 4px 3px 8px; --fs:clamp(12px, 2.1cqh, 17px)}
+  .pk > .pk-opps.c4{--fs:clamp(11.5px, 1.9cqh, 15px)}
+  .pk > .pk-table{grid-area:table; margin:2px 4px 6px 8px}
+  .pk-table .pk-board .pc, .pk-table .pk-slot{--ch:min(calc((100cqw - 28px) / 5 * 1.4), 44cqh, 220px)}
+  .pk-ended .pk-table .pk-board .pc, .pk-ended .pk-table .pk-slot{--ch:min(calc((100cqw - 28px) / 5 * 1.4), 25cqh, 150px)}
+  .pk-opps .pk-hist{display:none}
+  .pk-opps.c1 .pk-hist, .pk-opps.c2 .pk-hist, .pk-opps.c3:not(.r2) .pk-hist{display:flex}
+  @container pk (max-height:420px){ .pk-opps .pk-hist{display:none} }
+  .pc.pk-oc{--ch:clamp(46px, 13cqh, 96px)}
+  /* Heads-up: the one opponent in two short rows (name · action · cards / chips · history · cards) */
+  .pk-opps.c1.wide .seatchip.pk-seat{grid-template-columns:minmax(0,max-content) minmax(0,1fr) auto; grid-template-areas:"s1 s3 hc" "stk hist hc";
+    gap:2px 14px; padding:6px 10px; align-items:center}
+  .pk-opps.c1 .pk-hist{border-top:0; margin:0; padding:0}
+  .pk-opps.xs .seatchip.pk-seat{padding:4px 4px 5px}
+  .pk-opps.xs .pk-back{display:none}
+  .pk-opps.xs .pk-s2{flex-wrap:wrap; row-gap:1px}
+  .pk-opps.xs .pk-s1 .pk-bs{display:none}
+  .pk-opps.xs .pk-bs2{display:flex}
+  .pk-opps.xs .pk-hc:has(.pk-mini) + .pk-bs2{display:none}
+
+  /* My column */
+  .pk > .pk-dock{grid-area:dock; min-height:0; overflow-y:auto; display:flex; flex-direction:column; justify-content:center;
+    border-top:0; border-left:1px solid var(--line); padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px))}
+  .pk-dock.pk-act{box-shadow:inset 2px 0 0 var(--gold), -8px 0 24px -12px rgba(230,195,106,.5)}
+  .pk-me{gap:9px}
+  .pk .pk-hole .pc, .pk.pk-many .pk-hole .pc{--ch:clamp(64px, 25cqh, 180px)}
+  .pk.pk-ended .pk-hole .pc{--ch:clamp(60px, 22cqh, 140px)}
+  .pk.pk-raising .pk-hole .pc{--ch:clamp(48px, 15cqh, 130px)}
+  .pk-mine{--mf:clamp(12.5px, 3.6cqh, 17px)}
+  .pk-calc{gap:4px; margin-top:6px}
+  .pk-cc{min-height:clamp(40px, 7.5cqh, 60px)}
+  .pk-cc small{font-size:clamp(10px, 1.7cqh, 13px)}
+  .pk-cc b{font-size:clamp(14px, 2.7cqh, 21px)}
+  .pk-dock .hint{margin:5px 0; line-height:1.35; font-size:clamp(13px, 2.2cqh, 16px)}
+  .pk-dock .actions{gap:6px}
+  .pk-dock .actions .btn{min-height:clamp(44px, 8.5cqh, 62px); padding:8px 4px; font-size:clamp(14px, 2.5cqh, 18px)}
+  .pk-raise{gap:5px}
+  .pk-rhead span{font-size:clamp(14px, 2.4cqh, 18px)}
+  .pk-rhead b{font-size:clamp(21px, 4cqh, 30px)}
+  .pk-rinfo{font-size:clamp(12px, 2cqh, 15px); line-height:1.3}
+  .pk-rslide input, .pk-step{height:clamp(36px, 6.5cqh, 50px)}
+  .pk-qb{font-size:clamp(13px, 2.2cqh, 16px); min-height:clamp(40px, 7.5cqh, 56px)}
+  .pk-qb small{font-size:clamp(11px, 1.8cqh, 13px)}
+  .pk-raising .pk-draw{display:none}
+  @container pk (max-height:420px){
+    .pk-raising .pk-mysub, .pk-raising .pk-made{display:none}
+    .pk-raising .pk-dock .hint{margin:2px 0}
+    .pk-raise .pk-rslide input, .pk-raise .pk-step{height:36px}
+    .pk-raise .pk-qb{min-height:40px}
+  }
+  .pk-nohole{width:auto; padding:0 6px}
+
+  /* Watching: seats left and right of the felt */
+  .pk.pk-spec{grid-template-columns:clamp(180px, 25%, 340px) minmax(0,1fr) clamp(180px, 25%, 340px); grid-template-rows:minmax(0,1fr);
+    grid-template-areas:"opps table opps2"}
+  .pk-spec > .pk-opps2{grid-area:opps2}
+  .pk-spec > .pk-table{margin:6px 2px}
+  .pk-opps.col{display:flex; flex-direction:column; justify-content:center; gap:6px; min-height:0; padding:6px 4px 6px 8px; container:pkcol / size;
+    --fs:clamp(12px, min(calc(100cqh / var(--k, 4) * .155), 5.4cqw), 19px)}
+  .pk-opps.col.right{padding:6px 8px 6px 4px}
+  .pk-opps.col .seatchip.pk-seat{flex:0 1 auto; min-height:0; gap:1px 8px; padding:5px 8px}
+  .pk-opps.col .pc.pk-oc{--ch:clamp(30px, min(calc(100cqh / var(--k, 4) - 24px), 27cqw), 130px)}
+  .pk-opps.col.right .seatchip.pk-seat{grid-template-columns:auto minmax(0,1fr); grid-template-areas:"hc s1" "hc stk" "hc s3" "hc hist"}
+  .pk-opps.col .pk-hist{display:flex}
+  .pk-opps.col .pk-hc{align-self:center}
+  .pk-opps.col .pk-seat .av.sm{display:inline-grid}
+  .pk-opps.dense{align-content:center; padding:6px 4px 6px 8px}
+  .pk-opps.dense .pk-s2{flex-wrap:wrap; row-gap:1px}
+  .pk-opps2.dense{padding:6px 8px 6px 4px}
+  @container pkcol (max-height:420px){ .pk-opps.col.k4 .pk-hist{display:none} }
+  @container pkcol (max-height:320px){ .pk-opps.col.k3 .pk-hist{display:none} }
 }

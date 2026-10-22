@@ -110,14 +110,20 @@ export function shortLabel(id) {
   const k = kindKey(id);
   return k === "g" && c.rain ? loc(tx("비광", "Rain")) : loc(LABEL[k]);
 }
-export function hwHTML(id, extra = "") {
-  if (!id) return `<div class="hw back ${extra}"><i></i></div>`;
+/* Face designs chosen in the settings (core/settings.js sets <html data-hwdeck>); every card gets "hd-<design>" */
+export const HW_DECKS = ["classic", "trad", "night", "big", "flat"];
+const deckNow = () => (typeof document !== "undefined" && document.documentElement.dataset.hwdeck) || "classic";
+
+/* design: preview a design other than the chosen one (settings) */
+export function hwHTML(id, extra = "", design) {
+  const d = "hd-" + (design || deckNow());
+  if (!id) return `<div class="hw back ${d} ${extra}"><i></i></div>`;
   const c = CARDS[id];
   if (c.bonus) {
-    return `<div class="hw bonus ${extra}" data-c="${id}" title="${cardName(id)}"><span class="hw-n">★</span><span class="hw-k">+${c.pv}</span>` +
+    return `<div class="hw bonus ${d} ${extra}" data-c="${id}" title="${cardName(id)}"><span class="hw-n">★</span><span class="hw-k">+${c.pv}</span>` +
       `<span class="hw-art">🎁</span><span class="hw-l">${shortLabel(id)}</span></div>`;
   }
   const k = kindKey(id);
-  return `<div class="hw m${c.m} k-${k} ${extra}" data-c="${id}" title="${cardName(id)}"><span class="hw-n">${c.m}</span>` +
+  return `<div class="hw m${c.m} k-${k} ${d} ${extra}" data-c="${id}" title="${cardName(id)}"><span class="hw-n">${c.m}</span>` +
     `<span class="hw-k">${loc(MARK[k])}</span><span class="hw-art">${MONTH_ART[c.m]}</span><span class="hw-l">${shortLabel(id)}</span></div>`;
 }

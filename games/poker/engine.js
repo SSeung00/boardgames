@@ -607,6 +607,7 @@ export default {
   blurb: tx("노리밋 텍사스 홀덤. 두 장과 공용 카드 다섯 장으로 가장 센 패를! (놀이용 칩만)",
     "No-limit Texas Hold'em. Make the best hand from your two cards and five community cards! (play chips only)"),
   players: { min: 2, max: 8, default: 5 },
+  spectate: true,          // view(S, -1) is the public table: board, pots, stacks, bets, actions and shown hands only
   settings: [
     { key: "chips", label: tx("시작 칩", "Starting chips"), values: [1000, 2000], labels: ["1,000", "2,000"], default: 1000,
       note: tx("블라인드는 10/20 부터 시작합니다", "Blinds start at 10/20") },
@@ -826,6 +827,10 @@ export default {
     };
   },
 
+  /* Events carry no hidden cards: "reveal" and "show" only hold hands that are public anyway (all-in run-outs, showdowns).
+     Every seat and spectators therefore get the same events. */
+  filterEvent(ev) { return ev; },
+
   over(S) { return S.phase === "over"; },
 
   results(S) {
@@ -920,8 +925,10 @@ export default {
 
   leak(S, p, v) {
     if (JSON.stringify(v).includes('"deck"')) return "view contains the deck";
+    const seat = p >= 0 && p < S.n;          // p = -1: the public (spectator) view
+    if (!seat && v.my) return "the public view contains a player's private part";
     const allowed = new Set(S.board);
-    if (S.hole[p]) for (const c of S.hole[p]) allowed.add(c);
+    if (seat && S.hole[p]) for (const c of S.hole[p]) allowed.add(c);
     if (S.shown) for (const q of Object.keys(S.shown)) for (const c of S.shown[q]) allowed.add(c);
     const RE = /^[SHDC](1[0-3]|[1-9])$/;
     let bad = null;

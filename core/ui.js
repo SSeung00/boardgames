@@ -23,7 +23,8 @@ export const LS = {
 export const prefs = (() => {
   const saved = LS.json("prefs", {});
   if (saved.vibe === undefined && saved.sound === false) saved.vibe = false;   // the sound switch used to mute vibration too
-  return Object.assign({ name: "", sound: true, vibe: true, look: null, theme: "felt", back: "wine", accent: "orange", scale: "auto", motion: "on" }, saved);
+  return Object.assign({ name: "", sound: true, vibe: true, look: null, theme: "felt", back: "wine", accent: "orange", scale: "auto", motion: "on",
+    deck: "classic", dmdeck: "classic", hwdeck: "classic" }, saved);
 })();
 export const savePrefs = () => LS.put("prefs", prefs);
 
@@ -80,6 +81,42 @@ export const sound = {
   lose() { [440, 370, 311].forEach((f, i) => tone(f, .34, { type: "triangle", gain: .07, delay: i * .14 })); }
 };
 export const buzz = pattern => { try { if (prefs.vibe && navigator.vibrate) navigator.vibrate(pattern); } catch (e) { } };
+
+/* ---------- Flying cards ----------
+   fly(from, to): a copy of `to` (or of opt.html) starts over `from` — a player's seat, my hand — and lands on `to`, which stays
+   hidden until it arrives. Use it after the screen is redrawn, e.g. from a player's name chip to the card now on the table.
+   from may also be a DOMRect saved before the redraw (e.g. the card I tapped in my hand, which the redraw removed).
+   opt: {html, ms, delay, scale (start size, default from the two boxes), spin (deg)}. Skipped with reduced motion. */
+const calm = () => document.documentElement.dataset.motion === "calm" || matchMedia("(prefers-reduced-motion:reduce)").matches;
+export function fly(from, to, opt = {}) {
+  if (!from || !to || calm() || !to.isConnected || document.hidden) return null;   // hidden tabs don't animate: copies would pile up
+  const a = from.getBoundingClientRect ? from.getBoundingClientRect() : from, b = to.getBoundingClientRect();
+  if (!a.width || !b.width) return null;
+  const z = parseFloat(getComputedStyle(document.body).zoom) || 1;      // the page may be zoomed (screen size setting)
+  let ghost;
+  if (opt.html) { const t = document.createElement("template"); t.innerHTML = opt.html.trim(); ghost = t.content.firstChild; }
+  else ghost = to.cloneNode(true);
+  ghost.classList.add("flyer");
+  // the copy lives in <body>, outside the game's own CSS: take the card's sizes along
+  const cs = getComputedStyle(to);
+  for (const v of ["--cw", "--ch", "--hw", "--fs"]) { const x = cs.getPropertyValue(v).trim(); if (x) ghost.style.setProperty(v, x); }
+  ghost.style.fontSize = cs.fontSize;
+  Object.assign(ghost.style, { position: "fixed", left: b.left / z + "px", top: b.top / z + "px", width: b.width / z + "px", height: b.height / z + "px",
+    margin: "0", zIndex: "160", pointerEvents: "none", transition: "none" });
+  document.body.appendChild(ghost);
+  to.style.visibility = "hidden";
+  const dx = (a.left + a.width / 2 - b.left - b.width / 2) / z, dy = (a.top + a.height / 2 - b.top - b.height / 2) / z;
+  const sc = opt.scale !== undefined ? opt.scale : Math.max(.25, Math.min(1, Math.min(a.width / b.width, a.height / b.height)));
+  const anim = ghost.animate([
+    { transform: `translate(${dx}px,${dy}px) scale(${sc}) rotate(${opt.spin || 0}deg)`, opacity: .85 },
+    { transform: "none", opacity: 1 }
+  ], { duration: opt.ms || 420, delay: opt.delay || 0, easing: "cubic-bezier(.2,.75,.25,1)", fill: "backwards" });
+  let over = false;
+  const done = () => { if (over) return; over = true; ghost.remove(); to.style.visibility = ""; };
+  anim.onfinish = done; anim.oncancel = done;
+  setTimeout(done, (opt.ms || 420) + (opt.delay || 0) + 150);     // in case the animation never runs (tab in the background)
+  return anim;
+}
 
 /* ---------- Toasts ---------- */
 let toastT = 0;

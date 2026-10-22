@@ -9,6 +9,7 @@
      tp: the turn in progress (may pause for a choice) · ch: choice info · ppeok: {month: player who made the ppeok}
      go[p] number of Go calls · goScore[p] score at the last Go · shook[p] shakes/bombs [{m, bomb}] · flips[p] flip-only turns
      totals[p] running totals (always sum to 0) · nagari nagari multiplier · result settlement of the last round
+     last: the latest finished turn · lastBy[p]: each player's latest turn this round (public; lets a remounted screen show them)
    Every text produced here is bilingual (tx) — see games/README.md. */
 import { shuffle, randInt } from "../../core/rng.js";
 import { tx } from "../../core/i18n.js";
@@ -121,7 +122,7 @@ function deal(S) {
   S.caps = hands.map(() => []);
   S.caps[S.leader].push(...extra);
   S.go = zeros(n); S.goScore = zeros(n); S.flips = zeros(n); S.shook = hands.map(() => []);
-  S.ppeok = {}; S.tp = null; S.ch = null; S.last = null; S.result = null; S.shown = [];
+  S.ppeok = {}; S.tp = null; S.ch = null; S.last = null; S.lastBy = hands.map(() => null); S.result = null; S.shown = [];
   S.turn = S.leader; S.phase = "play";
   const nag = S.nagari > 1;
   const ev = [{ type: "deal", round: S.round, leader: S.leader,
@@ -292,6 +293,7 @@ function finishTurn(S, ev) {
     if (c) tp.stolen.push({ from: q, card: c });
   }
   S.last = { p, kind: tp.kind, m: tp.m, played: tp.played, flipped: tp.flipped, captured: tp.captured, combos: tp.combos, stolen: tp.stolen };
+  if (S.lastBy) S.lastBy[p] = JSON.parse(JSON.stringify(S.last));
   ev.push({ type: "turn", ...JSON.parse(JSON.stringify(S.last)), text: turnText(tp) });
   S.tp = null;
   const sc = scoreOf(S.caps[p]).total;
@@ -478,6 +480,7 @@ export default {
   blurb: tx("화투 짝 맞추기! 2명은 맞고, 3명은 고스톱. 점수가 나면 고? 스톱?",
     "Match hwatu flower cards by month! Matgo for 2, Go-Stop for 3. Once you score: Go on, or Stop?"),
   players: { min: 2, max: 3, default: 3 },
+  spectate: true,                  // view(S, -1) is the public view
   settings: [
     { key: "rounds", label: tx("판 수", "Rounds"), values: [5, 10], labels: [tx("5판", "5"), tx("10판", "10")], default: 5,
       note: tx("누적 점수로 순위를 정합니다", "Ranked by total score") },
@@ -666,7 +669,7 @@ export default {
 
   delay(S) { return S.phase === "roundEnd" ? (S.result && S.result.kind === "nagari" ? 4000 : 5500) : 1200; },
 
-  /* The card drawn after playing a bonus pi from the hand is known only to its owner */
+  /* The card drawn after playing a bonus pi from the hand is known only to its owner (spectators, p = -1, never see it) */
   filterEvent(ev, p) {
     if (ev.type === "bonus" && ev.drew && p !== ev.p) return { ...ev, drew: null };
     return ev;
@@ -688,6 +691,7 @@ export default {
     return 800 + Math.random() * 600;
   },
 
+  /* p = -1: the public view for spectators, watching screens and replays (no hand, no private preview) */
   view(S, p) {
     const me = Number.isInteger(p) && p >= 0 && p < S.n ? p : -1;
     const scores = S.caps.map(c => {
@@ -704,7 +708,8 @@ export default {
     } else if (S.turn === me) {
       status = S.phase === "choose" ? tx("가져갈 카드를 고르세요", "Pick a card to take") : S.phase === "gostop" ? tx("고? 스톱?", "Go or Stop?")
         : S.hands[me].length ? tx("내 차례 — 낼 카드를 고르세요", "Your turn — play a card") : tx("내 차례 — 패를 뒤집으세요", "Your turn — flip a card");
-    }
+    } else if (S.phase === "choose") status = tx(`{${S.turn}} 님이 가져갈 카드를 고르는 중`, `{${S.turn}} is picking a card to take`);
+    else if (S.phase === "gostop") status = tx(`{${S.turn}} 님 고? 스톱?`, `{${S.turn}}: Go or Stop?`);
     const copy = x => (x ? JSON.parse(JSON.stringify(x)) : null);
     return {
       phase: S.phase, round: S.round, rounds: S.rounds, n: S.n, th: TH(S.n), turn: S.turn, leader: S.leader,
@@ -714,7 +719,7 @@ export default {
       totals: S.totals.slice(), wins: S.wins.slice(), nagari: S.nagari,
       ch: S.phase === "choose" && S.ch ? { stage: S.ch.stage, m: S.ch.m, options: S.ch.options.slice() } : null,
       cur: S.tp ? { p: S.tp.p, played: S.tp.played.slice(), flipped: S.tp.flipped.slice() } : null,
-      last: copy(S.last), result: copy(S.result),
+      last: copy(S.last), lastBy: S.lastBy ? copy(S.lastBy) : null, result: copy(S.result),
       hand: me >= 0 ? sortCards(S.hands[me]) : [],
       can: me >= 0 ? specials(S, me) : null,
       preview: me >= 0 && S.phase === "gostop" && S.turn === me ? settle(S, me) : null,
@@ -787,7 +792,9 @@ export default {
     };
     walk(v);
     if (bad) return `hidden card ${bad} is visible`;
-    if (JSON.stringify(sortCards(S.hands[p])) !== JSON.stringify(v.hand)) return "own hand mismatch";
+    if (p < 0) {
+      if (v.hand.length || v.can || v.preview) return "spectator view has private parts";
+    } else if (JSON.stringify(sortCards(S.hands[p])) !== JSON.stringify(v.hand)) return "own hand mismatch";
     if (typeof v.deck !== "number") return "deck is not a number";
     return true;
   },

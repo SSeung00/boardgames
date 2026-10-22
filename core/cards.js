@@ -33,17 +33,24 @@ export function cardName(c) {
   return SUIT_SYMBOL[c[0]] + rankLabel(rankOf(c));
 }
 
-/* HTML for the screen — browser only. extra: additional classes ("sm" | "lg" for size, "sel" | "dim" | "can" for state) */
-export function cardHTML(c, extra = "") {
-  if (!c) return `<div class="pc back ${extra}"></div>`;
+/* Card face design chosen in the settings (core/settings.js sets <html data-deck>); "d-<design>" goes on every card */
+export const DECKS = ["classic", "jumbo", "four", "vintage", "neon", "minimal"];
+const deckNow = () => (typeof document !== "undefined" && document.documentElement.dataset.deck) || "classic";
+
+/* HTML for the screen — browser only. extra: additional classes ("sm" | "lg" for size, "sel" | "dim" | "can" for state).
+   deck: a face design to use instead of the chosen one (settings previews) */
+export function cardHTML(c, extra = "", deck) {
+  const d = "d-" + (deck || deckNow());
+  if (!c) return `<div class="pc back ${d} ${extra}"></div>`;
   if (isJoker(c)) {
-    return `<div class="pc joker ${c === "JC" ? "red" : "black"} ${extra}" data-c="${c}">` +
+    return `<div class="pc joker ${c === "JC" ? "red" : "black"} ${d} ${extra}" data-c="${c}">` +
       `<span class="pc-mid">🃏</span><span class="pc-sub">JOKER<small>${c === "JC" ? L("컬러", "colour") : L("흑백", "b/w")}</small></span></div>`;
   }
   const s = c[0], r = rankOf(c);
-  return `<div class="pc ${isRed(c) ? "red" : "black"} ${extra}" data-c="${c}">` +
+  return `<div class="pc ${isRed(c) ? "red" : "black"} s-${s} ${d} ${extra}" data-c="${c}">` +
     `<span class="pc-corner">${rankLabel(r)}<i>${SUIT_SYMBOL[s]}</i></span>` +
     `<span class="pc-mid">${SUIT_SYMBOL[s]}</span>` +
+    `<span class="pc-rk"><b>${rankLabel(r)}</b><i>${SUIT_SYMBOL[s]}</i></span>` +
     `<span class="pc-corner br">${rankLabel(r)}<i>${SUIT_SYMBOL[s]}</i></span></div>`;
 }
 

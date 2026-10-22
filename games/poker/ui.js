@@ -2,6 +2,9 @@
    Felt in the middle: 5 board cards (cards making my hand in gold) · pot · this hand's action log (results when the hand ends)
    Bottom: my cards · chips · current hand · draws / calc row (call · pot after call · pot odds · rough win chance) / action buttons
    Cards and text scale with the real height of .pk and the felt (container units) — no dead space.
+   Sideways (landscape): opponents above the felt on the left, my cards and buttons in a column on the right.
+   Spectators (me = -1, watching screens, TVs, public replays): no dock — every seat sits around the felt
+   (top and bottom rows in portrait, left and right columns sideways) and the board gets the freed space.
    A raise is chosen in the panel below and only sent after pressing confirm. An all-in call, and folding when checking is
    free, also need a second tap. All visible text is L("한국어", "English"), evaluated at render time. */
 import { cardHTML } from "../../core/cards.js";
@@ -17,11 +20,12 @@ const fmt = n => Number(n || 0).toLocaleString("ko-KR");
 const label = c => (RANK[+c.slice(1)] || c.slice(1)) + SUIT[c[0]];
 const red = c => c[0] === "H" || c[0] === "D";
 const ridx = c => { const r = +c.slice(1); return r === 1 ? 12 : r - 2; };
-const mini = (c, extra = "") => `<span class="pk-mini${red(c) ? " red" : ""}${extra ? " " + extra : ""}">${label(c)}</span>`;
+const mini = (c, extra = "") => `<span class="pk-mini s-${c[0]}${red(c) ? " red" : ""}${extra ? " " + extra : ""}">${label(c)}</span>`;
 const pct = x => `${Math.round(x * 100)}%`;
 const EQ_KEY = "bg.poker.eq";        // show the rough win chance (localStorage)
 const LSget = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 const LSset = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { } };
+const LAND = "(orientation: landscape) and (min-aspect-ratio: 4/3)";   // same query as the sideways layout in style.css
 /* Action code (engine log / seat act) → word */
 function actWord(a) {
   switch (a) {
@@ -118,6 +122,7 @@ function equityMC(hole, board, opps, sims) {
 
 export function mount(root, ctx) {
   const { el, esc, avatarHTML } = ctx;
+  const fly = ctx.fly || (() => null);
   root.innerHTML = "";
   const wrap = el("div", "pk");
   wrap.innerHTML = `
@@ -128,6 +133,7 @@ export function mount(root, ctx) {
       <div class="pk-mid" data-r="mid"></div>
       <div class="pk-log" data-r="log"></div>
     </div>
+    <div class="pk-opps pk-opps2" data-r="opps2" hidden></div>
     <div class="dock pk-dock" data-r="dock">
       <div class="pk-me" data-r="me"></div>
       <div class="pk-calc" data-r="calc"></div>
@@ -154,15 +160,18 @@ export function mount(root, ctx) {
     </div>`;
   root.appendChild(wrap);
   const R = k => wrap.querySelector(`[data-r="${k}"]`);
+  const mq = typeof matchMedia === "function" ? matchMedia(LAND) : null;
 
   let m = null;                 // last msg
+  let lastEv = null;            // events already handled (update may be called again with the same msg)
   let askId = 0;                // id of my current decision
   let busy = false, busyT = 0;  // short lock right after sending (prevents double taps)
   let panel = false, amt = 0;   // raise panel
   let armed = "", armT = 0;     // button waiting for a confirming second tap
-  let tickT = 0;
-  let boardSeen = { hand: 0, len: 0 };
-  let pops = new Set();         // seats that just put chips in (animation)
+  let tickT = 0, resizeT = 0;
+  let spec = false, land = false;   // spectator view · sideways layout
+  let newBoard = 0;             // board cards that just came out (flip animation)
+  let flips = new Set();        // seats whose cards were just turned up (flip animation)
   let showEq = LSget(EQ_KEY) !== "0";
   let eqCache = { key: "", val: 0 };
   let mine = null;              // current analysis of my hand (made in analyze, shared by the felt and the calc row)
@@ -170,7 +179,7 @@ export function mount(root, ctx) {
   /* ---------- Helpers ---------- */
   const names = () => m.players.map(p => p.name);
   const nameOf = q => (q === m.me ? L("나", "You") : names()[q] || "?");
-  const myAsk = () => (busy ? null : ctx.myAsk("bet"));
+  const myAsk = () => (busy || m.replay ? null : ctx.myAsk("bet"));
   const lastHere = v => (v.last && v.last.hand === v.hand && (v.phase === "end" || v.phase === "over") ? v.last : null);
   function winnersOf(last) {
     const s = new Set();
@@ -195,59 +204,113 @@ export function mount(root, ctx) {
     return out;
   }
 
-  /* ---------- Top: opponent panels ---------- */
+  /* ---------- Seat panels ---------- */
+  /* One seat: name row / chips · cards / last action · bet / this hand's history.
+     big: real cards (heads-up panel, spectator panels with room) instead of mini labels */
+  function seatEl(q, big) {
+    const v = m.v, s = v.seats[q], pl = m.players[q] || { name: "?", kind: "ai" }, active = v.turn === q;
+    const last = lastHere(v), wins = winnersOf(last);
+    const d = el("div", "seatchip pk-seat" + (active ? " turn" : "") + (s.out ? " out" : "") + (s.fold ? " pk-fold" : "") +
+      (s.allin && !s.fold ? " pk-allin" : "") + (wins.has(q) ? " pk-win" : ""));
+    d.dataset.q = q;
+    const show = last ? last.shows.find(x => x.p === q) : null;
+    // Status · last action (this street)
+    let st;
+    const folded = `<span class="pk-ab fold">${L("폴드", "Fold")}</span>`;
+    if (s.out) st = `<span class="pk-ab out">${L("탈락", "Out")}</span>`;
+    else if (active) st = `<span class="pk-tm" data-tm="${q}">${L("생각 중…", "Thinking…")}</span>`;
+    else if (show) st = `<span class="pk-ab hand${wins.has(q) ? " won" : ""}">${esc(loc(show.hand))}</span>`;
+    else if (last) st = wins.has(q) ? `<span class="pk-ab won">${L("승리", "Won")}</span>` : s.fold ? folded : "";
+    else if (s.fold) st = folded;
+    else if (s.allin) st = `<span class="pk-ab allin">${L("올인", "All-in")}</span>`;
+    else if (s.act) {
+      // The bet amount is on the gold chip next to it, so the badge shows only the action word
+      const [code, to] = s.act.split(" ");
+      const word = actWord(code) + (s.bet > 0 || !to ? "" : " " + fmt(+to));
+      st = `<span class="pk-ab ${actClass(code)}">${esc(word)}</span>`;
+    } else st = "";
+    // Bottom right: this street's bet, or chips won/lost once the hand is over
+    let right = "";
+    if (last && last.delta[q]) right = `<b class="pk-dl ${last.delta[q] > 0 ? "up" : "down"}">${last.delta[q] > 0 ? "+" : ""}${fmt(last.delta[q])}</b>`;
+    else if (s.bet > 0) right = `<span class="pk-bet" data-bq="${q}">${fmt(s.bet)}</span>`;
+    const live = s.inHand && !s.fold && !s.out && v.phase !== "over";
+    const best = show ? show.best : [];
+    const flip = flips.has(q) ? " pk-new" : "";
+    let cards;
+    if (big) cards = s.cards ? s.cards.map(c => cardHTML(c, "pk-oc" + flip + (wins.has(q) && best.includes(c) ? " pk-hl" : ""))).join("")
+      : live ? cardHTML(null, "pk-oc") + cardHTML(null, "pk-oc") : "";
+    else cards = s.cards ? s.cards.map(c => mini(c, (wins.has(q) && best.includes(c) ? "hl" : "") + flip)).join("")
+      : live ? '<span class="pk-back"></span><span class="pk-back"></span>' : "";
+    d.innerHTML = `<div class="pk-s1">${avatarHTML(pl.name, q, "sm")}<span class="nm">${esc(pl.name)}</span>` +
+      (pl.kind === "away" ? `<span class="away">${L("비움", "Away")}</span>` : "") + `<span class="pk-bs">${badges(q)}</span></div>` +
+      `<div class="pk-s2"><span class="pk-stk">${s.out ? "-" : fmt(s.chips)}</span><span class="pk-hc">${cards}</span><span class="pk-bs pk-bs2">${badges(q)}</span></div>` +
+      `<div class="pk-s3"><span class="pk-st">${st}</span><span class="pk-rt2">${right}</span></div>` +
+      `<div class="pk-hist">${histHTML(q)}</div>` +
+      (active ? `<div class="pk-tbar"><i data-tb="${q}"></i></div>` : "");
+    return d;
+  }
+  /* Fill one seat box. cols: grid columns (0 = one column, as tall as the box) */
+  function fillSeats(box, seats, cls, cols, big) {
+    box.className = (box.dataset.r === "opps2" ? "pk-opps pk-opps2 " : "pk-opps ") + cls;
+    box.style.gridTemplateColumns = cols ? `repeat(${cols},minmax(0,1fr))` : "";
+    box.innerHTML = "";
+    for (const q of seats) box.appendChild(seatEl(q, big));
+  }
+
+  /* Top: opponent panels (playing a seat) */
   function renderOpps() {
-    const v = m.v, n = m.players.length, box = R("opps");
+    const n = m.players.length, box = R("opps");
     const order = [];
     for (let k = 1; k < n; k++) order.push((m.me + k) % n);
     const no = order.length;
-    const cols = no <= 3 ? no : no === 4 ? 4 : no <= 6 ? 3 : 4;
-    const solo = no === 1;
-    box.className = `pk-opps c${cols}${no >= 5 ? " r2" : ""}${no === 4 ? " n4" : ""}`;
-    wrap.classList.toggle("pk-many", no >= 5);
-    box.innerHTML = "";
-    const last = lastHere(v), wins = winnersOf(last);
-    for (const q of order) {
-      const s = v.seats[q], pl = m.players[q], active = v.turn === q;
-      const d = el("div", "seatchip pk-seat" + (active ? " turn" : "") + (s.out ? " out" : "") + (s.fold ? " pk-fold" : "") +
-        (s.allin && !s.fold ? " pk-allin" : "") + (wins.has(q) ? " pk-win" : ""));
-      const show = last ? last.shows.find(x => x.p === q) : null;
-      // Status · last action (this street)
-      let st;
-      const folded = `<span class="pk-ab fold">${L("폴드", "Fold")}</span>`;
-      if (s.out) st = `<span class="pk-ab out">${L("탈락", "Out")}</span>`;
-      else if (active) st = `<span class="pk-tm" data-tm="${q}">${L("생각 중…", "Thinking…")}</span>`;
-      else if (show) st = `<span class="pk-ab hand${wins.has(q) ? " won" : ""}">${esc(loc(show.hand))}</span>`;
-      else if (last) st = wins.has(q) ? `<span class="pk-ab won">${L("승리", "Won")}</span>` : s.fold ? folded : "";
-      else if (s.fold) st = folded;
-      else if (s.allin) st = `<span class="pk-ab allin">${L("올인", "All-in")}</span>`;
-      else if (s.act) {
-        // The bet amount is on the gold chip next to it, so the badge shows only the action word
-        const [code, to] = s.act.split(" ");
-        const word = actWord(code) + (s.bet > 0 || !to ? "" : " " + fmt(+to));
-        st = `<span class="pk-ab ${actClass(code)}">${esc(word)}</span>`;
-      } else st = "";
-      // Bottom right: this street's bet, or chips won/lost once the hand is over
-      let right = "";
-      if (last && last.delta[q]) right = `<b class="pk-dl ${last.delta[q] > 0 ? "up" : "down"}">${last.delta[q] > 0 ? "+" : ""}${fmt(last.delta[q])}</b>`;
-      else if (s.bet > 0) right = `<span class="pk-bet${pops.has(q) ? " pop" : ""}">${fmt(s.bet)}</span>`;
-      const live = s.inHand && !s.fold && !s.out && v.phase !== "over";
-      const best = show ? show.best : [];
-      let cards;
-      if (solo) cards = s.cards ? s.cards.map(c => cardHTML(c, "pk-oc" + (wins.has(q) && best.includes(c) ? " pk-hl" : ""))).join("")
-        : live ? cardHTML(null, "pk-oc") + cardHTML(null, "pk-oc") : "";
-      else cards = s.cards ? s.cards.map(c => mini(c, wins.has(q) && best.includes(c) ? "hl" : "")).join("")
-        : live ? '<span class="pk-back"></span><span class="pk-back"></span>' : "";
-      d.innerHTML = `<div class="pk-s1">${avatarHTML(pl.name, q, "sm")}<span class="nm">${esc(pl.name)}</span>` +
-        (pl.kind === "away" ? `<span class="away">${L("비움", "Away")}</span>` : "") + `<span class="pk-bs">${badges(q)}</span></div>` +
-        `<div class="pk-s2"><span class="pk-stk">${s.out ? "-" : fmt(s.chips)}</span><span class="pk-hc">${cards}</span></div>` +
-        `<div class="pk-s3"><span class="pk-st">${st}</span><span class="pk-rt2">${right}</span></div>` +
-        `<div class="pk-hist">${histHTML(q)}</div>` +
-        (active ? `<div class="pk-tbar"><i data-tb="${q}"></i></div>` : "");
-      box.appendChild(d);
+    let cls, cols;
+    if (land) {
+      // Sideways the felt needs the height: one row whenever every panel stays at least about 62px wide
+      // (xs: very narrow panels drop the card backs — folds and shown cards still show)
+      const W = box.clientWidth || 480;
+      cols = no > 1 && W / no < 62 ? Math.ceil(no / 2) : Math.max(1, no);
+      const rows = Math.ceil(no / cols), pw = W / cols;
+      cls = (cols === 1 ? "c1 wide" : cols === 2 ? "c2" : pw < 112 ? "c4" : "c3") + (rows > 1 ? " r2" : "") + (pw < 74 ? " xs" : "");
+    } else {
+      cols = no <= 3 ? no : no === 4 ? 4 : no <= 6 ? 3 : 4;
+      cls = `c${cols}${no >= 5 ? " r2" : ""}${no === 4 ? " n4" : ""}${no === 1 ? " wide" : ""}`;
+      cols = 0;                  // the c1–c4 classes set the columns (n4 switches to 2×2 on tall screens)
     }
-    fitHist();
+    wrap.classList.toggle("pk-many", no >= 5);
+    fillSeats(box, order, cls, cols, no === 1);
   }
+
+  /* Spectators: every seat around the felt, going clockwise */
+  function renderRing() {
+    const n = m.players.length, k = Math.ceil(n / 2);
+    const A = [], B = [];
+    for (let q = 0; q < n; q++) (q < k ? A : B).push(q);
+    const a = R("opps"), b = R("opps2");
+    wrap.classList.remove("pk-many");
+    if (land) {
+      // Left column from the bottom up, right column from the top down.
+      // Very short screens (a sideways phone with the replay bar): two compact panels per row on each side
+      const per = (wrap.clientHeight - 12 - (k - 1) * 6) / k;
+      if (k >= 3 && per < 66) {
+        fillSeats(a, A.slice().reverse(), "spec c4 dense", 2, false);
+        fillSeats(b, B, "spec c4 dense", 2, false);
+        return;
+      }
+      fillSeats(a, A.slice().reverse(), `spec col wide left k${k}`, 0, true);
+      fillSeats(b, B, `spec col wide right k${k}`, 0, true);
+      for (const box of [a, b]) box.style.setProperty("--k", k);
+      return;
+    }
+    // Portrait: top row left → right, bottom row right → left. Tall screens use two wider columns with real cards
+    const tall = wrap.clientHeight >= 680;
+    const colsOf = c => (c <= 2 ? c : tall ? 2 : c);
+    const ca = colsOf(A.length), cb = colsOf(B.length);
+    const big = Math.max(ca, cb) <= 2;
+    const cls = (c, cnt) => `spec c${Math.min(4, c)}${c === 1 ? " wide" : ""}${cnt > c ? " r2" : ""}${big ? " big" : ""}`;
+    fillSeats(a, A, cls(ca, A.length), ca, big);
+    fillSeats(b, B.slice().reverse(), cls(cb, B.length), cb, big);
+  }
+
   /* Per-seat actions this hand (oldest → newest), with the street's first letter where the street changes */
   function histHTML(q) {
     const v = m.v;
@@ -263,7 +326,7 @@ export function mount(root, ctx) {
   }
   /* If the history overflows the panel, drop the oldest entries first (the newest stays visible) */
   function fitHist() {
-    for (const h of R("opps").querySelectorAll(".pk-hist")) {
+    for (const h of wrap.querySelectorAll(".pk-opps .pk-hist")) {
       let guard = 30;
       while (h.children.length > 1 && h.scrollWidth > h.clientWidth + 1 && guard--) {
         h.removeChild(h.firstElementChild);
@@ -294,8 +357,7 @@ export function mount(root, ctx) {
 
     // 5 board slots — gold for the winning hand when the hand is over, otherwise for the cards making my hand
     const board = R("board");
-    const fresh = boardSeen.hand === v.hand ? boardSeen.len : 0;
-    boardSeen = { hand: v.hand, len: v.board.length };
+    const fresh = v.board.length - newBoard;
     let hl = null, dimRest = false;
     if (last && last.showdown && last.pots.length) {
       const w = last.pots[0].winners[0].p;
@@ -310,7 +372,7 @@ export function mount(root, ctx) {
       bh += cardHTML(c, cls);
     }
     board.innerHTML = bh;
-    if (fresh < v.board.length) board.querySelectorAll(".pk-new").forEach((x, i) => x.style.animationDelay = (i * 0.12) + "s");
+    board.querySelectorAll(".pk-new").forEach((x, i) => x.style.animationDelay = (i * 0.12) + "s");
 
     // Below: hand results, or the pot
     const mid = R("mid");
@@ -417,10 +479,9 @@ export function mount(root, ctx) {
     if (!my) { box.innerHTML = ""; return; }
     const s = v.seats[m.me], last = lastHere(v), wins = winnersOf(last);
     const shown = last && last.shows.find(x => x.p === m.me);
-    const dealt = pops.has("deal");
     const core = !last && mine && mine.core ? mine.core : null;
     let cards;
-    if (my.hole) cards = my.hole.map(c => cardHTML(c, (s.fold ? "dim" : "") + (dealt ? " pk-deal" : "") +
+    if (my.hole) cards = my.hole.map(c => cardHTML(c, (s.fold ? "dim" : "") +
       ((shown && wins.has(m.me) && shown.best.includes(c)) || (core && !s.fold && core.includes(c)) ? " pk-hl" : ""))).join("");
     else cards = `<div class="pk-nohole">${s.out ? L("탈락", "Out") : v.phase === "over" ? "" : L("다음 판부터", "From the next hand")}</div>`;
     // Current hand · draws
@@ -443,7 +504,7 @@ export function mount(root, ctx) {
     box.innerHTML = `<div class="pk-hole">${cards}</div>
       <div class="pk-mine">
         <div class="pk-mystk"><b>${fmt(my.chips)}</b><small>${L("칩", "chips")}</small>${badges(m.me)}${delta ? `<span class="pk-delta ${delta > 0 ? "up" : "down"}">${delta > 0 ? "+" : ""}${fmt(delta)}</span>` : ""}</div>
-        <div class="pk-mysub">${my.bet ? `<span>${L("베팅", "Bet")} <b class="pk-bet${pops.has(m.me) ? " pop" : ""}">${fmt(my.bet)}</b></span>` : ""}${my.put && !last ? `<span>${L("이번 판", "This hand")} ${fmt(my.put)}</span>` : ""}${s.allin && !s.fold && !last ? `<span class="pk-ab allin">${L("올인", "All-in")}</span>` : ""}</div>
+        <div class="pk-mysub">${my.bet ? `<span>${L("베팅", "Bet")} <b class="pk-bet" data-bq="${m.me}">${fmt(my.bet)}</b></span>` : ""}${my.put && !last ? `<span>${L("이번 판", "This hand")} ${fmt(my.put)}</span>` : ""}${s.allin && !s.fold && !last ? `<span class="pk-ab allin">${L("올인", "All-in")}</span>` : ""}</div>
         <div class="pk-made">${made}</div>
         ${sub ? `<div class="pk-draw">${sub}</div>` : ""}
       </div>`;
@@ -480,9 +541,10 @@ export function mount(root, ctx) {
     const v = m.v, my = v.my, ask = myAsk();
     const s = my ? v.seats[m.me] : null;
     const kinds = ask && my ? my.kinds : [];
+    if (!ask) panel = false;                 // nothing to decide (a replay, or the turn moved on): never leave the raise panel open
     R("dock").classList.toggle("pk-act", !!ask);
     wrap.classList.toggle("pk-raising", panel);
-    R("acts").hidden = panel;
+    R("acts").hidden = panel || !!m.replay;   // a replay only shows the table, never buttons
     R("raise").hidden = !panel;
     const fold = R("fold"), call = R("call"), raise = R("raiseBtn");
     const toCall = my ? my.toCall : 0, callAmt = my ? my.callAmt : 0;
@@ -499,6 +561,10 @@ export function mount(root, ctx) {
     raise.disabled = !kinds.includes("raise");
 
     let hint;
+    const whoseTurn = () => {
+      const who = `<b>${esc(names()[v.turn])}</b>`, t = `<span class="pk-tm" data-tm="${v.turn}"></span>`;
+      return L(`${who} 님 차례 ${t}`, `${who}'s turn ${t}`);
+    };
     if (v.phase === "over") hint = L("게임 끝", "Game over");
     else if (!my || !s || s.out) hint = s && s.out ? L("탈락했습니다 — 끝까지 구경할 수 있어요", "You're out — you can watch until the end") : L("구경 중", "Watching");
     else if (v.phase === "start") hint = L("카드를 섞는 중…", "Shuffling…");
@@ -508,12 +574,11 @@ export function mount(root, ctx) {
       const open = v.curBet === 0;
       hint = toCall > 0 ? L(`<b>내 차례</b> — 콜 ${fmt(callAmt)} · 레이즈 · 폴드 ${t}`, `<b>Your turn</b> — call ${fmt(callAmt)}, raise or fold ${t}`)
         : L(`<b>내 차례</b> — 체크하거나 ${open ? "벳" : "레이즈"}하세요 ${t}`, `<b>Your turn</b> — check or ${open ? "bet" : "raise"} ${t}`);
-    } else if (s.fold) hint = L("폴드했습니다 — 이번 판은 구경", "You folded — watching this hand");
+    } else if (m.replay && v.turn >= 0) hint = whoseTurn();      // replays: say whose turn it is, never "your turn"
+    else if (s.fold) hint = L("폴드했습니다 — 이번 판은 구경", "You folded — watching this hand");
     else if (s.allin) hint = L("올인! 결과를 기다리는 중", "All-in! Waiting for the result");
-    else if (v.turn >= 0) {
-      const who = `<b>${esc(names()[v.turn])}</b>`, t = `<span class="pk-tm" data-tm="${v.turn}"></span>`;
-      hint = L(`${who} 님 차례 ${t}`, `${who}'s turn ${t}`);
-    } else hint = v.runout ? L("올인 — 남은 카드를 펼치는 중", "All-in — dealing the rest of the board") : L("다음 카드를 펼치는 중", "Dealing the next card");
+    else if (v.turn >= 0) hint = whoseTurn();
+    else hint = v.runout ? L("올인 — 남은 카드를 펼치는 중", "All-in — dealing the rest of the board") : L("다음 카드를 펼치는 중", "Dealing the next card");
     R("hint").innerHTML = hint;
     if (panel) renderPanel();
   }
@@ -609,16 +674,14 @@ export function mount(root, ctx) {
     renderActions();
   };
 
-  /* ---------- Sound · animation ---------- */
-  function effects(evs) {
-    pops = new Set();
+  /* ---------- Sound ---------- */
+  function sounds(evs) {
     let chip = false, deal = false, flip = false, pass = false, tick = false, good = false, bad = false;
     for (const e of evs) {
       if (e.type === "act") {
-        if (e.a !== "fold" && e.a !== "check") pops.add(e.p);
-        if (e.p === m.me) continue;                     // my own action already made its sound on tap
+        if (e.p === m.me && !m.replay) continue;        // my own action already made its sound on tap
         if (e.a === "fold") pass = true; else if (e.a === "check") tick = true; else chip = true;
-      } else if (e.type === "hand") { deal = true; pops.add("deal"); }
+      } else if (e.type === "hand") deal = true;
       else if (e.type === "street" || e.type === "reveal" || e.type === "show") flip = true;
       else if (e.type === "win") { if (e.p === m.me) good = true; else chip = true; }
       else if (e.type === "bust" && e.p === m.me) bad = true;
@@ -633,18 +696,90 @@ export function mount(root, ctx) {
     if (deal) { ctx.sound.deal(); setTimeout(() => ctx.sound.deal(), 130); setTimeout(() => ctx.sound.deal(), 260); }
   }
 
+  /* ---------- Flying chips and cards ----------
+     snap() saves where the pot and the bet chips were before redrawing; flights() then moves copies from there:
+     a bet from the seat to its bet chip (or straight into the pot when the street closed), bets left on the table into the pot,
+     the pot to the winners, and the hole cards from the middle of the felt to every seat. */
+  const shown = x => x && x.isConnected && x.getClientRects().length && x.offsetWidth > 0;
+  const first = (...xs) => xs.find(shown) || null;
+  const rectOf = x => (shown(x) ? x.getBoundingClientRect() : null);
+  function parts(q) {
+    if (!spec && q === m.me) {
+      const me = R("me");
+      const stk = me.querySelector(".pk-mystk > b");
+      return { src: stk, bet: me.querySelector(".pk-mysub .pk-bet"), won: first(me.querySelector(".pk-delta.up"), stk), cards: [...me.querySelectorAll(".pk-hole .pc")] };
+    }
+    const d = wrap.querySelector(`.pk-seat[data-q="${q}"]`);
+    if (!d) return null;
+    const stk = d.querySelector(".pk-stk");
+    return { src: first(d.querySelector(".av"), stk, d), bet: d.querySelector(".pk-bet"), won: first(d.querySelector(".pk-dl.up"), stk), cards: [...d.querySelectorAll(".pk-hc > *")] };
+  }
+  function snap() {
+    const bets = {};
+    for (const b of wrap.querySelectorAll("[data-bq]")) { const r = rectOf(b); if (r) bets[b.dataset.bq] = r; }
+    return { pot: rectOf(wrap.querySelector(".pk-chipico")), board: rectOf(R("board")), bets };
+  }
+  function flights(evs, before) {
+    const v = m.v, n = v.seats.length;
+    const pot = wrap.querySelector(".pk-chipico");
+    let t = 0;
+    if (evs.some(e => e.type === "hand")) {
+      // Hole cards: two rounds from the small blind, one card at a time
+      const board = R("board");
+      let i = 0;
+      for (let k = 0; k < 2; k++) for (let j = 0; j < n; j++) {
+        const q = (Math.max(0, v.sbSeat) + j) % n;
+        if (!v.seats[q].inHand) continue;
+        const p = parts(q), c = p && p.cards[k];
+        if (c && shown(c)) fly(board, c, { ms: 300, delay: i * 45, spin: k ? 8 : -8 });
+        i++;
+      }
+      t = i * 45 + 200;
+      // then the blinds go out
+      for (const q of [v.sbSeat, v.bbSeat]) {
+        const p = q >= 0 ? parts(q) : null;
+        if (p && p.src && shown(p.bet)) fly(p.src, p.bet, { ms: 380, delay: t });
+      }
+    }
+    const ended = evs.some(e => e.type === "win");
+    for (const e of evs) {
+      if (e.type !== "act" || !(e.amount > 0)) continue;
+      const p = parts(e.p);
+      if (!p || !p.src) continue;
+      if (shown(p.bet)) fly(p.src, p.bet, { ms: 380 });
+      else if (shown(pot)) fly(p.src, pot, { ms: 420 });
+    }
+    // The street closed: chips still in front of the players slide into the pot
+    if (before && !ended && shown(pot) && v.seats.every(s => !s.bet)) {
+      let k = 0;
+      for (const q of Object.keys(before.bets)) fly(before.bets[q], pot, { ms: 420, delay: 120 + 60 * k++, scale: 1 });
+    }
+    // The hand is over: the pot goes to the winner(s)
+    if (ended) {
+      const from = (before && before.pot) || R("board");
+      let k = 0;
+      const seen = new Set();
+      for (const e of evs) {
+        if (e.type !== "win" || seen.has(e.p)) continue;
+        seen.add(e.p);
+        const p = parts(e.p);
+        if (p && p.won) fly(from, p.won, { ms: 520, delay: 200 + 160 * k++, scale: 1.3 });
+      }
+    }
+  }
+
   /* Time left for the player to act — text (⏱ 12s) and a bar under their panel */
   function startTick() {
     clearInterval(tickT);
     const v = m.v;
     if (v.turn < 0) return;
-    const pe = m.pending.find(a => a.p === v.turn);
+    const pe = (m.pending || []).find(a => a.p === v.turn);
     const end = pe && pe.ms > 0 ? Date.now() + pe.ms : 0;
     const total = pe && (pe.total || (m.settings && m.settings.timer ? m.settings.timer * 1000 : 0));
     const paint = () => {
       const left = end ? Math.max(0, end - Date.now()) : 0, s = Math.ceil(left / 1000);
       for (const t of wrap.querySelectorAll(`[data-tm="${v.turn}"]`)) {
-        if (!end) { t.textContent = v.turn === m.me ? "" : L("생각 중…", "Thinking…"); continue; }
+        if (!end) { t.textContent = v.turn === m.me && !spec ? "" : L("생각 중…", "Thinking…"); continue; }
         t.textContent = L(`⏱ ${s}초`, `⏱ ${s}s`);
         t.classList.toggle("low", s <= 5);
       }
@@ -658,24 +793,60 @@ export function mount(root, ctx) {
     if (end) tickT = setInterval(paint, 250);
   }
 
-  function update(msg) {
-    m = msg;
-    const ask = ctx.myAsk("bet");
-    const id = ask ? ask.id : 0;
-    if (id !== askId) { askId = id; panel = false; armed = ""; busy = false; clearTimeout(busyT); }
-    effects(msg.ev || []);
+  function render() {
+    spec = m.me < 0 || !m.v.seats[m.me];
+    land = !!(mq && mq.matches);
+    wrap.classList.toggle("pk-spec", spec);
+    wrap.classList.toggle("pk-bigfelt", spec || land);     // the felt's text scales with the felt (style.css)
+    R("dock").hidden = spec;
+    R("opps2").hidden = !spec;
     analyze();
-    renderOpps();
+    if (spec) renderRing(); else renderOpps();
+    fitHist();
     renderTable();
-    renderMe();
-    renderCalc();
-    renderActions();
+    if (!spec) { renderMe(); renderCalc(); renderActions(); }
     startTick();
   }
+
+  function update(msg) {
+    const evs = msg.ev && msg.ev !== lastEv ? msg.ev : [];   // the same msg again: draw it, but no sounds or flights
+    lastEv = msg.ev;
+    const before = evs.length && m ? snap() : null;
+    m = msg;
+    const ask = ctx.myAsk("bet");
+    const id = ask && !msg.replay ? ask.id : 0;
+    if (id !== askId) { askId = id; panel = false; armed = ""; busy = false; clearTimeout(busyT); }
+    newBoard = 0;
+    flips = new Set();
+    for (const e of evs) {
+      if (e.type === "street" && e.cards) newBoard += e.cards.length;
+      else if (e.type === "reveal" && e.shows) for (const x of e.shows) flips.add(x.p);
+      else if (e.type === "show") flips.add(e.p);
+    }
+    newBoard = Math.min(newBoard, msg.v.board.length);
+    sounds(evs);
+    render();
+    if (evs.length) flights(evs, before);
+    newBoard = 0; flips = new Set();          // re-renders (resize) don't animate again
+  }
+
+  /* Rotating the phone or resizing the window switches between the portrait and sideways layouts */
+  function onResize() {
+    clearTimeout(resizeT);
+    resizeT = setTimeout(() => { if (m) render(); }, 60);
+  }
+  window.addEventListener("resize", onResize);
+  if (mq) { if (mq.addEventListener) mq.addEventListener("change", onResize); else if (mq.addListener) mq.addListener(onResize); }
 
   return {
     update,
     ticker: false,               // the felt shows this hand's log itself, so hide the one-line ticker
-    destroy() { clearInterval(tickT); clearTimeout(busyT); clearTimeout(armT); root.innerHTML = ""; }
+    landscape: true,             // has its own sideways layout (style.css)
+    destroy() {
+      clearInterval(tickT); clearTimeout(busyT); clearTimeout(armT); clearTimeout(resizeT);
+      window.removeEventListener("resize", onResize);
+      if (mq) { if (mq.removeEventListener) mq.removeEventListener("change", onResize); else if (mq.removeListener) mq.removeListener(onResize); }
+      root.innerHTML = "";
+    }
   };
 }

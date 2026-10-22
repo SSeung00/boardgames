@@ -1,8 +1,43 @@
-/* Device settings: look of the app (table theme, card backs, button colour, screen size, motion), sound, and my profile
+/* Device settings: look of the app (table theme, card faces and backs, button colour, screen size, motion), sound, and my profile
    (name, avatar emoji / colour, short message). Everything is stored in prefs (localStorage) and applied at once. */
 import { el, esc, prefs, savePrefs, sound, modal, head, buttonRow, avatarHTML, AVATAR_COLORS, LOOK_EMOJI, LOOK_MSG_MAX, cleanLook } from "./ui.js";
 import { L, lang, setLang } from "./i18n.js";
 import { installState, install, iosInstallHelp } from "./social.js";
+import { cardHTML } from "./cards.js";
+import { dmCardHTML } from "../games/dalmuti/cards.js";
+import { hwHTML } from "../games/gostop/cards.js";
+
+/* Card face designs — the games draw every card with the chosen design's class (see core/cards.js and the cards.js of Dalmuti and Go-Stop) */
+export const DECK_FACES = {
+  deck: {
+    ko: "트럼프 (원카드 · 포커 · 도둑잡기)", en: "Playing cards (One Card · Poker · Old Maid)",
+    items: { classic: ["클래식", "Classic"], jumbo: ["큰 글자", "Big index"], four: ["4색", "Four colours"], vintage: ["빈티지", "Vintage"],
+      neon: ["네온", "Neon"], minimal: ["미니멀", "Minimal"] },
+    sample: d => cardHTML("S1", "", d) + cardHTML("D12", "", d)
+  },
+  dmdeck: {
+    ko: "달무티", en: "Dalmuti",
+    items: { classic: ["클래식", "Classic"], royal: ["왕실", "Royal"], number: ["숫자 크게", "Big number"], minimal: ["단색", "Flat colour"],
+      parchment: ["양피지", "Parchment"] },
+    sample: d => dmCardHTML(1, "", d) + dmCardHTML(9, "", d)
+  },
+  hwdeck: {
+    ko: "화투 (고스톱)", en: "Hwatu (Go-Stop)",
+    items: { classic: ["클래식", "Classic"], trad: ["전통", "Traditional"], night: ["밤", "Night"], big: ["월 크게", "Big month"], flat: ["단색", "Flat colour"] },
+    sample: d => hwHTML("1a", "", d) + hwHTML("6b", "", d)
+  }
+};
+/* The previews need the games' own card styles */
+function previewCSS() {
+  for (const href of ["games/dalmuti/style.css", "games/gostop/style.css"]) {
+    if (document.querySelector(`link[href="${href}"]`)) continue;
+    const l = document.createElement("link"); l.rel = "stylesheet"; l.href = href;
+    document.head.appendChild(l);
+  }
+}
+/* Screens that draw cards redraw when a look setting changes (app.js listens) */
+const lookListeners = new Set();
+export const onLookChange = f => lookListeners.add(f);
 
 /* Table themes: colours of the page, panels, dialogs and the felt */
 export const THEMES = {
@@ -55,6 +90,7 @@ export function applyLook() {
   st.setProperty("--accent", a.v[0]); st.setProperty("--accent2", a.v[1]);
   st.setProperty("--zoom", String(zoomFor(prefs.scale)));
   root.dataset.motion = prefs.motion === "calm" ? "calm" : "on";
+  for (const k of Object.keys(DECK_FACES)) root.dataset[k] = DECK_FACES[k].items[prefs[k]] ? prefs[k] : "classic";
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = t.v[0];
 }
@@ -85,13 +121,26 @@ function seg(box, values, current, fmt, onPick) {
 }
 
 export function openSettings(onChange = () => { }) {
+  previewCSS();
   modal((box, close) => {
     box.classList.add("setmodal");
     head(box, L("설정", "Settings"), L("꾸미기와 소리", "Look & sound"), L("이 기기에만 적용됩니다. 바꾸면 바로 보입니다.", "Applies to this device only. Changes show right away."));
-    const set = (k, v) => { prefs[k] = v; savePrefs(); applyLook(); onChange(k); };
+    const set = (k, v) => { prefs[k] = v; savePrefs(); applyLook(); onChange(k); for (const f of lookListeners) try { f(k); } catch (e) { console.error(e); } };
 
     section(box, L("테이블 테마", "Table theme"));
     swatches(box, THEMES, prefs.theme, t => `<span class="sw-table" style="--a:${t.v[4]};--b:${t.v[6]};--p:${t.v[3]}"></span>`, k => set("theme", k));
+    section(box, L("카드 디자인", "Card designs"));
+    for (const [k, fam] of Object.entries(DECK_FACES)) {
+      box.appendChild(el("div", "set-sub", esc(L(fam.ko, fam.en))));
+      const row = el("div", "swatches decks");
+      for (const [d, nm] of Object.entries(fam.items)) {
+        const b = el("button", "swatch deckpick", `<span class="deck-sample">${fam.sample(d)}</span><small>${esc(L(nm[0], nm[1]))}</small>`);
+        b.setAttribute("aria-pressed", String((prefs[k] || "classic") === d));
+        b.onclick = () => { set(k, d); for (const x of row.children) x.setAttribute("aria-pressed", String(x === b)); };
+        row.appendChild(b);
+      }
+      box.appendChild(row);
+    }
     section(box, L("카드 뒷면", "Card back"));
     swatches(box, BACKS, prefs.back, b => `<span class="sw-back" style="background:${b.bk};border-color:${b.edge};box-shadow:inset 0 0 0 1.5px ${b.inn}"></span>`, k => set("back", k));
     section(box, L("버튼 색", "Button colour"));

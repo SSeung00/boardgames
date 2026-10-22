@@ -2,6 +2,8 @@
    Rules, randomness and action ids must match the original line for line (games/dalmuti/test_port.mjs compares them).
    If the original changes, change this file too. Pure rules — no screen, sound or DOM.
 
+   One addition that the original doesn't have: the "pass lock" house rule (opt.passLock, off by default — the original rules
+   are untouched when it is off): a player who passes can't play again until the trick ends.
    Cards are tracked as counts per number, not as objects: hands[p][r] = how many r cards player p holds.
    r = 1..12 are normal cards, r = 13 is the Jester (wild). Index 0 is unused. */
 
@@ -63,6 +65,7 @@ export function create(opt) {
   const n = opt.n;
   return {
     v: 1, n, rounds: opt.rounds, round: 1, rs: opt.seed | 0,
+    ...(opt.passLock ? { passLock: true } : {}),   // house rule: once you pass, you sit out the rest of the trick (absent = original)
     seats: [...Array(n).keys()],          // seating order = turn order
     titles: zeros(n), scores: zeros(n),
     hands: [...Array(n)].map(() => zeros(14)),
@@ -86,6 +89,14 @@ export function nextWithCards(G, fromSeat) {
   for (let step = 1; step <= G.n; step++) {
     const s = (fromSeat + step) % G.n;
     if (handSize(G, G.seats[s]) > 0) return s;
+  }
+  return -1;
+}
+/* Pass lock: the next seat that still holds cards and hasn't passed in this trick */
+function nextActive(G, fromSeat) {
+  for (let step = 1; step <= G.n; step++) {
+    const s = (fromSeat + step) % G.n, q = G.seats[s];
+    if (handSize(G, q) > 0 && !G.passed[q]) return s;
   }
   return -1;
 }
@@ -224,7 +235,7 @@ export function act(G, id) {
     G.played[JESTER] += a.jesters;
     G.trick = { rank: a.rank, count: a.count, plain: a.plain, jesters: a.jesters, by: p };
     G.passStreak = 0;
-    G.passed.fill(false);
+    if (!G.passLock) G.passed.fill(false);   // pass lock: whoever passed stays out until the trick ends
     G.lastAct[p] = { rank: a.rank, count: a.count, jesters: a.jesters };
     if (handSize(G, p) === 0) {
       G.finish.push(p);
@@ -241,8 +252,11 @@ export function act(G, id) {
   }
   if (G.trick) {
     const owner = G.trick.by, ownerHas = handSize(G, owner) > 0;
-    // Official rule: the trick ends when everyone except the last player to play has passed in a row
-    if (G.passStreak >= holders.length - (ownerHas ? 1 : 0)) {
+    // Official rule: the trick ends when everyone except the last player to play has passed in a row.
+    // Pass lock: when everyone still holding cards, except the last player to play, has passed at some point in the trick.
+    const ends = G.passLock ? holders.every(q => q === owner || G.passed[q])
+                            : G.passStreak >= holders.length - (ownerHas ? 1 : 0);
+    if (ends) {
       const ws = seatOf(G, owner);
       G.turn = ownerHas ? ws : nextWithCards(G, ws);
       ev.trickEnd = { winner: owner, leader: G.seats[G.turn] };
@@ -250,7 +264,7 @@ export function act(G, id) {
       return ev;
     }
   }
-  G.turn = nextWithCards(G, G.turn);
+  G.turn = G.passLock && G.trick ? nextActive(G, G.turn) : nextWithCards(G, G.turn);
   return ev;
 }
 

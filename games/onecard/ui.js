@@ -1,8 +1,13 @@
 /* One Card screen
-   Top: opponents row in turn order (me › … › me) — arrows · cards left · last action · bust risk · "Next"
-   Middle: deck (cards left) · top card · "what can be played now" panel (suit to follow · attack stack · how to answer) · recent plays strip
-   Bottom: my summary (cards · playable cards · distance to bust) · hint · my hand (two rows when large) · buttons
-   Sizes come from the measured screen height — spare height makes the cards bigger (no dead space) */
+   Portrait — top: opponents row in turn order (me › … › me) — arrows · cards left · last action · bust risk · "Next"
+     middle: deck (cards left) · top card · "what can be played now" panel (suit to follow · attack stack · how to answer) ·
+             recent plays strip · history
+     bottom: my summary (cards · playable cards · distance to bust) · hint · my hand (two rows when large) · buttons
+   Landscape (phones held sideways, computers, TVs): the seats form a column on the left, the table sits top right and the
+     dock (summary · hint · hand, with the buttons beside the hand) bottom right.
+   Spectators (me = -1: watching screens, people waiting, public replays): every seat in the strip, no dock — the table and
+     the discard pile take the space. Nothing to press.
+   Sizes come from the measured screen — spare room makes the cards bigger (no dead space) */
 import { cardHTML, cardName, isJoker, rankOf, suitOf, rankLabel, SUITS, SUIT_SYMBOL, SUIT_NAME } from "../../core/cards.js";
 import { L, loc } from "../../core/i18n.js";
 
@@ -13,6 +18,10 @@ const AV_COLORS = ["#c9774a", "#5f9e6e", "#5b84c4", "#b05f9a", "#c4a24a", "#4aa3
 const power = c => (c === "JB" ? 5 : c === "JC" ? 7 : rankOf(c) === 2 ? 2 : rankOf(c) === 1 ? (c === "S1" ? 5 : 3) : 0);
 const ordEn = n => n + (n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th");
 const place = n => L(`${n}등`, ordEn(n));
+/* The landscape layout — the same query as in style.css */
+const LAND_Q = "(orientation: landscape) and (min-aspect-ratio: 4/3)";
+const isLand = () => typeof matchMedia === "function" && matchMedia(LAND_Q).matches;
+const LAND_W = 26, LAND_H = 37;            // size of the landing spot for cards drawn by a seat (.oc-land)
 
 export function mount(root, ctx) {
   const { el, esc, avatarHTML } = ctx;
@@ -26,8 +35,10 @@ export function mount(root, ctx) {
         <div class="oc-pile" data-r="pile"></div>
         <div class="oc-info" data-r="info"></div>
       </div>
-      <div class="oc-recent" data-r="recent"></div>
-      <div class="oc-log" data-r="log"></div>
+      <div class="oc-side">
+        <div class="oc-recent" data-r="recent"></div>
+        <div class="oc-log" data-r="log"></div>
+      </div>
       <div class="oc-flash" data-r="flash" aria-live="polite"></div>
     </div>
     <div class="dock oc-dock" data-r="dock">
@@ -49,11 +60,15 @@ export function mount(root, ctx) {
   let fresh = [];            // cards just drawn — highlighted
   let topIn = false;         // the top discard just changed
   let hot = -1;              // player who just acted — name chip pops
+  let tapped = null;         // {c, r, t}: the card I just played and where it was (DOMRect) — it flies from there to the pile
   let cdT = 0, flashT = 0, busyT = 0, cdAsk = 0, cdEnd = 0, cdTotal = 1;
   let log = [], logEv = null;   // history inside the table instead of the one-line ticker (raw bilingual texts; newest shown first)
   let geo = { cw: 64, ch: 91, rows: 1, gap: 0, lift: 14 };   // my hand's card size (set by fit)
 
   const names = () => (M ? M.players.map(p => p.name) : []);
+  const watching = () => !!M && M.me < 0;                   // spectator: public view, nothing to act on
+  const replaying = () => !!M && (!!M.replay || !!ctx.replay);
+  const buzz = p => { if (!replaying()) ctx.buzz(p); };     // no vibration while a replay plays
   const myPlay = () => !!(M && M.v.phase === "play" && ctx.myAsk("play"));
   const busy = () => { const a = ctx.myAsk(); return !!a && a.id === busyAsk && Date.now() < busyUntil; };
   function markBusy() {
@@ -72,7 +87,7 @@ export function mount(root, ctx) {
   const initial = p => esc([...String(names()[p] || "?")][0] || "?");
   const nCards = n => L(`${n}장`, `${n} card${n === 1 ? "" : "s"}`);
 
-  /* Small card (rank above · suit below) — opponents row · recent strip */
+  /* Small card (rank above · suit below) — seats · recent strip */
   function mini(c, cls = "") {
     if (isJoker(c)) return `<span class="oc-mc jk${c === "JC" ? " red" : ""} ${cls}"><b>🃏</b><i>${c === "JC" ? L("컬러", "col") : L("흑백", "b/w")}</i></span>`;
     return `<span class="oc-mc${REDS[suitOf(c)] ? " red" : ""} ${cls}"><b>${rankLabel(rankOf(c))}</b><i>${SUIT_SYMBOL[suitOf(c)]}</i></span>`;
@@ -88,33 +103,30 @@ export function mount(root, ctx) {
     if (t === "S1") return L("조커로만 막아요", "jokers only");
     return `A · ${L("조커", "joker")}`;
   }
-  function matchText(v) {
-    if (v.need) return `${sym(v.need)} ${L("만 · 조커", "only · joker")}`;
-    return `${sym(suitOf(v.top))} ${L("또는", "or")} <b>${rankLabel(rankOf(v.top))}</b> · ${L("조커", "joker")}`;
-  }
   function whyNot(v) {
     if (v.attack > 0) return L(`공격 +${v.attack} — 막을 수 있는 공격 카드만 낼 수 있어요`, `Attack +${v.attack} — only an attack card that answers it`);
     if (v.need) return L(`지금은 ${NEED_SYM[v.need]} 무늬나 조커만 낼 수 있어요`, `Only ${NEED_SYM[v.need]} or a joker can be played now`);
     return L("맨 위 카드와 무늬나 숫자가 같아야 해요", "Must match the top card's suit or rank");
   }
 
-  /* ---------- Opponents row: me › A › B › C › me (‹ when reversed) ---------- */
-  function opps() {
-    const m = M, v = m.v, box = R("opps"), n = v.st.length, me = m.me;
+  /* ---------- Seats: me › A › B › C › me (‹ when reversed); spectators see every seat: 1 › 2 › … › ↺ ----------
+     A row on top in portrait, a column on the left in landscape (the arrows turn with it) */
+  function seats() {
+    const m = M, v = m.v, box = R("opps"), n = v.st.length, me = m.me, spec = me < 0, land = isLand();
     const playing = v.phase === "play";
     const nx = playing ? (v.call ? v.turn : nextOf(v, v.turn)) : -1;   // during the call window: who plays once it closes
     const order = [];
-    for (let k = 1; k < n; k++) order.push((me + k) % n);
-    const seq = [me, ...order, me];                       // arrow k sits between seq[k] and seq[k+1]
-    const fw = v.dir > 0;
+    if (spec) for (let q = 0; q < n; q++) order.push(q);
+    else for (let k = 1; k < n; k++) order.push((me + k) % n);
+    const seq = spec ? [...order, order[0]] : [me, ...order, me];   // arrow k sits between seq[k] and seq[k+1]
+    const fw = v.dir > 0, g = fw ? "›" : "‹";
     // Light the arrow leading from the current player to the next one
     let liveArr = -1;
     if (playing && !v.call) for (let k = 0; k < seq.length - 1; k++) if ((fw ? seq[k] : seq[k + 1]) === v.turn) { liveArr = k; break; }
-    const arr = k => `<span class="oc-arr${k === liveArr ? " on" : ""}">${fw ? "›" : "‹"}</span>`;
+    const arr = k => `<span class="oc-arr${k === liveArr ? " on" : ""}"><b>${g}</b></span>`;
     const bust = v.set.bust;
     const meCap = L("나", "Me");
-    let h = `<span class="oc-cap${liveArr === 0 ? " on" : ""}"><i>${meCap}</i>${fw ? "›" : "‹"}</span>`;
-    order.forEach((p, i) => {
+    const chip = p => {
       const pl = m.players[p] || { name: "?" }, st = v.st[p], c = v.sizes[p];
       const turn = playing && !v.call && p === v.turn;
       const cls = ["oc-opp"];
@@ -141,15 +153,40 @@ export function mount(root, ctx) {
         `<span class="oc-took${a.pen ? " pen" : ""}">+${a.d}</span>`;
       const tag = pl.kind === "ai" ? '<span class="oc-ai">AI</span>' : pl.kind === "away" ? `<span class="oc-ai away">${L("비움", "away")}</span>` : "";
       const badge = turn ? `<em class="oc-tag now">${L("차례", "Turn")}</em>` : p === nx && playing ? `<em class="oc-tag">${L("다음", "Next")}</em>` : "";
-      h += `<div class="${cls.join(" ")}">${badge}
-        <div class="oc-oh">${avatarHTML(pl.name, p, "sm")}${last}</div>
+      // Face-down fan of the cards held (shown on big seats — TVs, computers)
+      const fan = st === "in" && c ? `<span class="oc-fan" aria-hidden="true">${"<i></i>".repeat(Math.min(c, 14))}</span>` : "";
+      return `<div class="${cls.join(" ")}" data-p="${p}">${badge}
+        <div class="oc-oh">${avatarHTML(pl.name, p, "sm")}${last}<span class="oc-land"></span></div>
         <div class="oc-on">${esc(pl.name)}${tag}</div>
-        <div class="oc-oc">${cnt}</div>${warn}</div>`;
-      if (i < order.length - 1) h += arr(i + 1);
+        <div class="oc-oc">${cnt}</div>${fan}${warn}</div>`;
+    };
+    let h = spec ? "" : `<span class="oc-cap${liveArr === 0 ? " on" : ""}"><i>${meCap}</i><b>${g}</b></span>`;
+    order.forEach((p, i) => {
+      h += chip(p);
+      if (i < order.length - 1) h += arr(spec ? i : i + 1);
     });
-    h += `<span class="oc-cap${liveArr === seq.length - 2 ? " on" : ""}">${fw ? "›" : "‹"}<i>${meCap}</i></span>`;
+    const endOn = liveArr === seq.length - 2 ? " on" : "";
+    h += spec ? `<span class="oc-cap end${endOn}" title="${L("처음 자리로", "back to the first seat")}"><b>${g}</b><i>↺</i></span>`
+      : `<span class="oc-cap${endOn}"><b>${g}</b><i>${meCap}</i></span>`;
     box.innerHTML = h;
-    box.classList.toggle("many", order.length >= 4);
+    box.classList.toggle("many", !land && !spec && order.length >= 4);
+    box.classList.toggle("two", !land && spec && n >= 5);   // spectators on a phone: two rows of bigger seats
+  }
+  /* Landscape: share the column's height between the seats. --sh: a seat's height; --sz: the scale of its contents,
+     also limited by the column's width (style.css) */
+  function seatSize() {
+    const box = R("opps"), k = box.querySelectorAll(".oc-opp").length || 1;
+    const arrows = box.querySelectorAll(".oc-arr").length, caps = box.querySelectorAll(".oc-cap").length, avail = box.clientHeight - 14;
+    let sh = (avail - arrows * 12 - caps * 18) / k;
+    const tight = sh < 40;                                // many seats on a short screen: one-line seats, slimmer arrows
+    if (tight) sh = (avail - arrows * 8 - caps * 14) / k;
+    box.classList.toggle("tight", tight);
+    sh = Math.max(28, Math.min(132, sh));
+    const sz = Math.min(sh, (box.clientWidth - 10) * .5);
+    sh = Math.min(sh, Math.max(sz * 1.35 + 12, sz >= 60 ? sz * 1.6 + 12 : 0));   // no tall empty seats in a narrow column
+    box.style.setProperty("--sh", Math.floor(sh) + "px");
+    box.style.setProperty("--sz", Math.floor(sz) + "px");
+    box.classList.toggle("big", sh >= 76 && sz >= 60);
   }
 
   /* ---------- Middle ---------- */
@@ -181,7 +218,7 @@ export function mount(root, ctx) {
         `<div class="oc-i-big suit${two ? " two" : ""}${REDS[v.need] ? " red" : ""}">${NEED_SYM[v.need]}</div>` +
         `<div class="oc-i-sub">${L(`${two ? "두 무늬 중 하나" : loc(SUIT_NAME[v.need])}만 · 조커 가능`, `${two ? "Either suit" : `${loc(SUIT_NAME[v.need])} only`} · ${jk} OK`)}</div>`;
     }
-    else h = `<div class="oc-i-lbl">${L("맞출 것", "Match")}</div><div class="oc-i-big match">${sym(suitOf(v.top))}<small>${L("또는", "or")}</small>${rankLabel(rankOf(v.top))}</div><div class="oc-i-sub">${L("무늬나 숫자 · 조커", "suit or rank · joker")}</div>`;
+    else h = `<div class="oc-i-lbl">${L("맞출 것", "Match")}</div><div class="oc-i-big match${rankOf(v.top) === 10 ? " ten" : ""}">${sym(suitOf(v.top))}<small>${L("또는", "or")}</small>${rankLabel(rankOf(v.top))}</div><div class="oc-i-sub">${L("무늬나 숫자 · 조커", "suit or rank · joker")}</div>`;
     if (v.again && v.phase === "play") h += `<div class="oc-i-k">${L("K — 한 장 더", "K — play again")}</div>`;
     const info = R("info");
     info.innerHTML = h;
@@ -192,18 +229,28 @@ export function mount(root, ctx) {
     R("recent").innerHTML = rec.length ? `<span class="oc-rl">${L("최근", "Recent")}</span>` + rec.map((r, i) =>
       `<span class="oc-ri${i === rec.length - 1 ? " now" : ""}">${mini(r.c)}${r.s ? `<em class="${REDS[r.s] ? "red" : ""}">→${SUIT_SYMBOL[r.s]}</em>` : ""}` +
       (r.p < 0 ? `<span class="oc-who first">${L("첫", "1st")}</span>` : `<span class="oc-who" style="--ac:${AV_COLORS[r.p % AV_COLORS.length]}">${initial(r.p)}</span>`) + `</span>`).join('<span class="oc-rarr">›</span>') : "";
-    const lines = log.length ? log.slice(-5).reverse() : v.last ? [v.last] : [];
+    const lines = log.length ? log.slice(-8).reverse() : v.last ? [v.last] : [];
     R("log").innerHTML = lines.map(t => `<div>${esc(ctx.nameText(t))}</div>`).join("");
   }
 
-  /* ---------- "One card!" call window ---------- */
+  /* ---------- "One card!" call window ----------
+     Players get the big button over the table and hand. Spectators and replays only see a banner (nothing to press). */
   function callBox() {
     const m = M, v = m.v, box = R("call");
     clearInterval(cdT);
     if (!v.call || v.phase !== "play") { box.hidden = true; box.innerHTML = ""; return; }
-    const owner = v.call.p, mine = owner === m.me, ask = ctx.myAsk("call");
+    const owner = v.call.p, mine = owner === m.me, ask = ctx.myAsk("call"), land = isLand();
+    const pos = (top, left, w) => Object.assign(box.style, { top: top + "px", left: left + "px", width: w ? w + "px" : "", right: w ? "auto" : "0", bottom: w ? "auto" : "0" });
     box.hidden = false;
-    box.style.top = R("opps").offsetHeight + "px";
+    if (watching() || replaying()) {
+      const t = R("table");
+      box.className = "oc-call passive";
+      pos(t.offsetTop + t.offsetHeight - 10, t.offsetLeft, t.offsetWidth);
+      box.innerHTML = `<div class="oc-callnote">☝️ ${L(`<b>${esc(names()[owner])}</b> 님이 한 장 — 원카드!`, `<b>${esc(names()[owner])}</b> is down to one card — "One card!"`)}</div>`;
+      return;
+    }
+    // Over the table and my hand; the seats stay visible (above in portrait, at the left in landscape)
+    if (land) pos(0, R("opps").offsetWidth); else pos(R("opps").offsetHeight, 0);
     box.className = "oc-call" + (mine ? " own" : "");
     box.innerHTML = `
       <div class="oc-callwho">${mine ? L("한 장 남았습니다!", "One card left!") : L(`<b>${esc(names()[owner])}</b> 님이 한 장!`, `<b>${esc(names()[owner])}</b> has one card!`)}</div>
@@ -214,7 +261,7 @@ export function mount(root, ctx) {
     const btn = box.querySelector('[data-k="call"]');
     btn.onclick = () => {
       if (busy() || !ctx.myAsk("call")) return;
-      if (ctx.send({ call: true })) { markBusy(); btn.classList.add("hit"); btn.disabled = true; ctx.sound.chip(); ctx.buzz(40); }
+      if (ctx.send({ call: true })) { markBusy(); btn.classList.add("hit"); btn.disabled = true; ctx.sound.chip(); buzz(40); }
     };
     const skip = box.querySelector('[data-k="skip"]');
     if (skip) skip.onclick = () => { if (!busy() && ctx.send({ call: false })) { markBusy(); skip.disabled = true; } };
@@ -306,36 +353,86 @@ export function mount(root, ctx) {
     });
   }
 
-  /* ---------- Fitting: share out the screen height ---------- */
+  /* ---------- Fitting: share out the screen ---------- */
   function fit() {
-    const v = M.v, H = wrap.clientHeight, W = wrap.clientWidth;
+    const v = M.v, H = wrap.clientHeight, W = wrap.clientWidth, spec = watching(), land = isLand();
     if (!H || !W) { geo = handGeo(v.hand.length || 1, W || 340, 120, 60); return; }
-    wrap.classList.toggle("tall", H >= 700);
-    wrap.classList.toggle("short", H < 600);
-    const hb = R("hand"), table = R("table");
-    hb.style.height = "0px";
-    const fixed = R("opps").offsetHeight + R("dock").offsetHeight + 8;   // includes the margins around the table
-    const rest = Math.max(160, H - fixed);
-    const hw = hb.clientWidth || W - 20;
-    const n = v.hand.length;
-    const cwMax = Math.min(hw / 3.4, Math.max(66, rest * .17));
-    const feltMin = Math.max(150, rest * .36);
-    if (n) {
-      geo = handGeo(n, hw, Math.max(90, Math.min(rest * .6, rest - feltMin)), cwMax);
-      hb.style.height = geo.h + "px";
-    } else hb.style.height = "0px";
-    // Table: the remaining height sets the top card and recent-strip sizes
-    const fh = table.clientHeight, fw = table.clientWidth;
-    const mw = Math.round(Math.max(22, Math.min(44, fh * .1, (fw - 80) / 5.6)));
-    const recentH = mw * 1.38 + 20;
-    const LH = 18;                                        // height of one history line
-    let tc = Math.min(fh - recentH - (fh > 230 ? LH : 0) - 30, 230, (fw - 150) / (0.7 + .56));   // top card height (the deck is 0.8×)
-    tc = Math.max(64, Math.floor(tc));
+    wrap.classList.toggle("tall", !land && H >= 700);
+    wrap.classList.toggle("short", !land && H < 600);
+    wrap.style.setProperty("--ocH", H + "px");
+    const hb = R("hand"), table = R("table"), n = v.hand.length;
+    if (land || !spec) wrap.classList.remove("stack");
+    if (land) seatSize();
+    if (!spec) {
+      hb.style.height = "0px";
+      const hw = hb.clientWidth || W - 20;
+      if (land) {
+        // Landscape: the hand shares the right-hand side with the table; the buttons sit beside it
+        const top = Math.max(R("me").offsetHeight, R("hint").offsetHeight) + 12;
+        const cwMax = Math.min(hw / 4.2, Math.max(56, H * .2), 120);
+        if (n) {
+          geo = handGeo(n, hw, Math.max(80, Math.min(H * .42, H - top - Math.max(150, H * .45))), cwMax);
+          hb.style.height = geo.h + "px";
+        }
+      } else {
+        const fixed = R("opps").offsetHeight + R("dock").offsetHeight + 8;   // includes the margins around the table
+        const rest = Math.max(160, H - fixed);
+        const cwMax = Math.min(hw / 3.4, Math.max(66, rest * .17));
+        const feltMin = Math.max(150, rest * .36);
+        if (n) {
+          geo = handGeo(n, hw, Math.max(90, Math.min(rest * .6, rest - feltMin)), cwMax);
+          hb.style.height = geo.h + "px";
+        }
+      }
+    }
+    // Table: the remaining room sets the top card and recent-strip sizes
+    const fh = table.clientHeight, fw = table.clientWidth, lg = R("log");
+    let tc, mw, lines, LH = 18, noRecent = false;        // LH: height of one history line
+    if (land) {
+      // deck · pile · info in a row, the recent strip and history beside them
+      mw = Math.round(Math.max(20, Math.min(54, fh * .12, fw * .045)));
+      if (spec) LH = Math.round(Math.max(18, Math.min(26, mw * .48)));
+      const iw = t => Math.round(Math.max(116, Math.min(230, t * .95)));
+      const avail = fw - (mw * 5 + 4 * 12 + 18 + 30) - 30;   // keep room for five recent cards
+      tc = Math.floor(Math.min(fh - 38, spec ? 560 : 340));
+      const rowW = t => 1.25 * t + 2 * Math.max(16, Math.min(30, t * .08)) + iw(t) + 12;   // deck .55 · pile .7 · gaps (style.css) · info
+      while (tc > 64 && rowW(tc) > avail) tc -= 2;
+      tc = Math.max(64, tc);
+      table.style.setProperty("--iw", iw(tc) + "px");
+      lines = Math.max(0, Math.min(spec ? 8 : 6, Math.floor((fh - (mw * 1.38 + 22) - 28) / LH)));
+    } else if (spec) {
+      // Portrait spectators (no hand): the info panel beside the pile as for players, or — when that gives a clearly
+      // bigger pile (tall screens) — underneath it (.stack)
+      mw = Math.round(Math.max(22, Math.min(44, fh * .08, (fw - 80) / 5.6)));
+      const recentH = mw * 1.38 + 20;
+      const side = Math.floor(Math.min(fh - recentH - LH - 30, 300, (fw - 150) / (0.7 + .56)));
+      const below = ih => Math.floor(Math.min(fh - recentH - ih - 2 * LH - 46, (fw - 40) / 1.3, 360));
+      const stack = below(100) > side * 1.1;
+      wrap.classList.toggle("stack", stack);
+      if (stack) {
+        table.style.setProperty("--tc", Math.max(64, below(100)) + "px");
+        const ih = R("info").offsetHeight || 100;          // the panel's text scales with --tc: measure it at that size
+        tc = Math.max(64, below(ih));
+        lines = Math.max(0, Math.min(6, Math.floor((fh - tc - ih - recentH - 52) / LH)));
+      } else {
+        tc = Math.max(64, side);
+        lines = Math.max(0, Math.min(6, Math.floor((fh - tc - recentH - 34) / LH)));
+      }
+    } else {
+      mw = Math.round(Math.max(22, Math.min(44, fh * .1, (fw - 80) / 5.6)));
+      const recentH = mw * 1.38 + 20;
+      tc = Math.min(fh - recentH - (fh > 230 ? LH : 0) - 30, 230, (fw - 150) / (0.7 + .56));   // top card height (the deck is 0.8×)
+      tc = Math.max(64, Math.floor(tc));
+      // Show as many history lines as the spare height allows (up to 5)
+      lines = Math.max(0, Math.min(5, Math.floor((fh - tc - recentH - 34) / LH)));
+      // A very full hand on a small phone leaves too little table for the recent strip: drop the strip, keep the pile
+      noRecent = tc + recentH + 30 > fh;
+      if (noRecent) tc = Math.max(64, Math.floor(Math.min(fh - 30, 230, (fw - 150) / (0.7 + .56))));
+    }
+    R("recent").hidden = noRecent;
     table.style.setProperty("--tc", tc + "px");
     table.style.setProperty("--mw", mw + "px");
-    // Show as many history lines as the spare height allows (up to 5)
-    const lines = Math.max(0, Math.min(5, Math.floor((fh - tc - recentH - 34) / LH)));
-    const lg = R("log");
+    table.style.setProperty("--lh", LH + "px");
     lg.style.height = lines * LH + "px";
     lg.hidden = !lines;
   }
@@ -366,7 +463,10 @@ export function mount(root, ctx) {
       if (!now || now.id !== ask.id) { ctx.toast(L("차례가 지나갔습니다", "Your turn has passed")); return; }
       a.suit = s;
     }
-    if (ctx.send(a)) { markBusy(); sel = null; fresh = []; ctx.sound.place(); render(); }
+    // Where the card is now — it flies from here to the pile when the play comes back
+    const pc = [...R("hand").querySelectorAll(".pc")].find(x => x.dataset.c === c);
+    const rect = pc ? pc.getBoundingClientRect() : null;
+    if (ctx.send(a)) { tapped = rect ? { c, r: rect, t: Date.now() } : null; markBusy(); sel = null; fresh = []; ctx.sound.place(); render(); }
   }
 
   async function draw() {
@@ -403,6 +503,7 @@ export function mount(root, ctx) {
     const nm = names();
     let t, cls = "hint";
     if (v.phase === "over") t = L("게임 끝", "Game over");
+    else if (v.call && replaying()) t = L(`<b>${esc(nm[v.call.p])}</b> 님이 한 장 — 원카드!`, `<b>${esc(nm[v.call.p])}</b> is down to one card — "One card!"`);
     else if (v.call) t = v.call.p === me ? L("<b>원카드!</b> 버튼을 눌러 외치세요", "Press <b>One card!</b> to call it")
       : L(`<b>${esc(nm[v.call.p])}</b> 님이 한 장 — 먼저 누르면 잡아요!`, `<b>${esc(nm[v.call.p])}</b> has one card — press first to catch them!`);
     else if (myPlay()) {
@@ -434,7 +535,7 @@ export function mount(root, ctx) {
     flashT = setTimeout(() => { f.className = "oc-flash"; }, 1400);
   }
   function events(m) {
-    const v = m.v, me = m.me, nm = m.players.map(p => p.name);
+    const v = m.v, me = m.me, nm = m.players.map(p => p.name), spec = me < 0;
     let snd = null, rank = 0;
     const want = (s, r) => { if (r >= rank) { snd = s; rank = r; } };
     for (const e of m.ev) {
@@ -442,10 +543,12 @@ export function mount(root, ctx) {
         topIn = true; hot = e.p;
         if (e.block) { want("good", 3); flash(L("🛡️ 공격을 막았다!", "🛡️ Attack blocked!"), "good"); }
         else if (e.attack) {
-          if (v.phase === "play" && v.turn === me && v.attack > 0) { want("bad", 4); ctx.buzz([90, 50, 90]); flash(L(`공격 +${v.attack}!`, `Attack +${v.attack}!`), "bad"); }
+          if (v.phase === "play" && v.turn === me && v.attack > 0) { want("bad", 4); buzz([90, 50, 90]); flash(L(`공격 +${v.attack}!`, `Attack +${v.attack}!`), "bad"); }
+          else if (spec && v.phase === "play" && v.attack > 0) { want("chip", 2); flash(`${L("공격", "Attack")} +${v.attack} → ${nm[v.turn] || ""}`, "bad"); }
           else want("chip", 2);
         } else if (e.reverse) { want("pass", 2); flash(v.dir > 0 ? L("› 방향 바뀜 (순서대로)", "› Direction reversed (forward)") : L("‹ 방향 바뀜 (거꾸로)", "‹ Direction reversed (backward)")); }
         else if (e.skip === me) { want("pass", 3); flash(L("건너뜀 ⏭️", "Skipped ⏭️"), "bad"); }
+        else if (spec && e.skip !== undefined) { want("pass", 2); flash(L(`⏭️ ${nm[e.skip] || ""} 건너뜀`, `⏭️ ${nm[e.skip] || ""} is skipped`)); }
         else if (e.suit) { want("place", 2); flash(`${L("무늬", "Suit")} → ${SUIT_SYMBOL[e.suit]} ${loc(SUIT_NAME[e.suit])}`, REDS[e.suit] ? "red" : "gold"); }
         else want("place", 1);
         if (e.p === me) fresh = [];
@@ -460,7 +563,7 @@ export function mount(root, ctx) {
         if (e.safe === true) { flash(`📣 ${L("원카드!", "One card!")} — ${nm[e.owner] || ""}`, "gold"); want(e.owner === me ? "good" : "chip", 3); }
         else if (e.safe === false) {
           flash(e.owner === me ? L("잡혔다! 1장 추가 😱", "Caught! +1 card 😱") : e.p === me ? L("잡았다! 🫵", "Got them! 🫵") : L(`${nm[e.p] || ""} 님이 잡았다!`, `${nm[e.p] || ""} caught them!`), e.owner === me ? "bad" : "good");
-          if (e.owner === me) { want("bad", 4); ctx.buzz(120); } else want(e.p === me ? "good" : "chip", 3);
+          if (e.owner === me) { want("bad", 4); buzz(120); } else want(e.p === me ? "good" : "chip", 3);
         }
       } else if (e.type === "out" && e.p === me) want("good", 4);
       else if (e.type === "bust") { want(e.p === me ? "lose" : "bad", 4); flash(L(`💥 ${nm[e.p] || ""} 님 파산`, `💥 ${nm[e.p] || ""} goes bust`), "bad"); }
@@ -468,15 +571,63 @@ export function mount(root, ctx) {
     if (snd && ctx.sound[snd]) ctx.sound[snd]();
   }
 
+  /* ---------- Flying cards (after the screen shows the new state) ----------
+     a played card: from the player's seat (my own: from where I tapped it) to the top of the pile;
+     drawn cards: from the deck to the player's seat, or into my hand — one after another for a penalty */
+  const seatOf = p => wrap.querySelector(`.oc-opp[data-p="${p}"]`);
+  function flyCard(from, to, opt) {
+    if (!from || !to) return null;
+    // The flying copy lives outside .oc: give it this card's size so the face keeps its proportions (.pc.oc-fly in style.css)
+    to.style.setProperty("--cw", to.offsetWidth + "px");
+    to.style.setProperty("--ch", to.offsetHeight + "px");
+    to.classList.add("oc-fly");
+    return ctx.fly(from, to, opt);
+  }
+  function flights(m) {
+    if (!m.ev.length) return;
+    const v = m.v, me = m.me;
+    const top = wrap.querySelector(".oc-top .pc"), deck = wrap.querySelector(".oc-deck .pc") || R("deck");
+    const back = cardHTML(null, "oc-fly").replace("<div ", `<div style="--cw:${LAND_W}px;--ch:${LAND_H}px" `);
+    let wait = 0;
+    for (const e of m.ev) {
+      if (e.type === "play" && top && e.card === v.top) {
+        let from;
+        if (me >= 0 && e.p === me) {
+          from = tapped && tapped.c === e.card && Date.now() - tapped.t < 10000 ? tapped.r : R("hand").offsetHeight ? R("hand") : R("me");
+          tapped = null;
+        } else { const s = seatOf(e.p); from = s && s.querySelector(".oc-oh"); }
+        // The flight replaces the drop-in animation (stop it first: its rotation would distort the measured target)
+        const box = top.parentElement;
+        box.classList.remove("in");
+        if (!flyCard(from, top, { delay: wait })) { void box.offsetWidth; box.classList.add("in"); }
+        wait += 120;
+      } else if (e.type === "draw" && e.n > 0) {
+        const k = Math.min(e.n, 8);
+        if (me >= 0 && e.p === me) {
+          [...R("hand").querySelectorAll(".oc-card .pc.new")].slice(0, k).forEach((x, i) => flyCard(deck, x, { delay: wait + i * 90, ms: 380 }));
+        } else {
+          const s = seatOf(e.p), to = s && s.querySelector(".oc-land");
+          const sc = Math.max(1, Math.min(4, (deck.offsetWidth || LAND_W) / LAND_W));
+          if (to) for (let i = 0; i < k; i++) ctx.fly(deck, to, { html: back, delay: wait + i * 90, ms: 380, scale: sc });
+        }
+        wait += k * 90;
+      }
+    }
+  }
+
   function render() {
     if (!M) return;
+    const spec = watching();
     wrap.classList.toggle("en", L(false, true));
-    opps(); table(); meLine(); hint(); buttons();
+    wrap.classList.toggle("spec", spec);
+    seats(); table();
+    if (!spec) { meLine(); hint(); buttons(); }
     fit();
-    hand(); callBox();
+    if (!spec) hand();
+    callBox();
   }
   function update(m) {
-    const again = m === M || m.ev === logEv;             // called again with the same msg: log · sounds only once
+    const again = m === M || m.ev === logEv;             // called again with the same msg: log · sounds · flights only once
     M = m;
     if (again) { render(); return; }
     logEv = m.ev;
@@ -485,6 +636,7 @@ export function mount(root, ctx) {
     hot = -1;
     events(m);
     render();
+    try { flights(m); } catch (e) { console.error(e); }
   }
 
   function onResize() { if (M) render(); }
@@ -493,6 +645,7 @@ export function mount(root, ctx) {
   return {
     update,
     ticker: false,           // the recent-plays strip and last-action badges replace the one-line ticker
+    landscape: true,         // has its own sideways layout (style.css)
     destroy() {
       window.removeEventListener("resize", onResize);
       clearInterval(cdT); clearTimeout(flashT); clearTimeout(busyT);

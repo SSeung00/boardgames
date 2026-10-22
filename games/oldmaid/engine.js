@@ -47,6 +47,7 @@ export default {
     "Discard pairs and draw one card at a time from your neighbour. Whoever ends up with the joker is the Old Maid!"),
   players: { min: 2, max: 8, default: 4 },
   settings: [],
+  spectate: true,          // view(S, -1) is the public table: card counts, the current draw, discarded pairs
   rules: tx(`<ul>
     <li>카드 52장에 <b>조커 1장</b>을 섞어 모두 나눠 줍니다.</li>
     <li>손에 같은 숫자 두 장이 있으면 짝으로 버립니다 (자동).</li>
@@ -106,7 +107,8 @@ export default {
     return ev;
   },
 
-  /* Only the drawer and the player drawn from see the drawn card (ranks of discarded pairs are public) */
+  /* Only the drawer and the player drawn from see the drawn card (ranks of discarded pairs are public).
+     Spectators (p = -1) are neither, so they get the redacted copy too. */
   filterEvent(ev, p) {
     if (ev.type === "draw" && p !== ev.from && p !== ev.to) return { ...ev, card: null, joker: null };
     return ev;
@@ -119,13 +121,15 @@ export default {
   },
   thinkTime() { return 600 + Math.random() * 600; },
 
+  /* p = -1 is the public view (watching screens, replays from the spectator seat): everything except the hands */
   view(S, p) {
     const victim = S.phase === "play" ? nextWithCards(S, S.turn) : -1;
     const mine = p >= 0 ? S.hands[p].slice().sort((a, b) => (isJoker(a) ? 99 : rankOf(a)) - (isJoker(b) ? 99 : rankOf(b)) || a.localeCompare(b)) : [];
     return {
       phase: S.phase, turn: S.turn, victim, sizes: S.hands.map(h => h.length), out: S.out.slice(), loser: S.loser,
       discards: S.discards, gone: S.gone.slice(), last: S.last, hand: mine,   // gone[rank]: cards of that rank discarded in pairs (public)
-      status: S.phase === "over" ? tx("게임 끝", "Game over") : (p === S.turn ? tx("내 차례 — 한 장 뽑으세요", "Your turn — draw a card") : "")
+      // No "your turn" here: views are replayed later, when nobody can act. The shell shows "Your turn" from the pending list.
+      status: S.phase === "over" ? tx("게임 끝", "Game over") : ""
     };
   },
 
@@ -138,7 +142,7 @@ export default {
   /* For tests: any legal action */
   randomAction(S, p, rng) { return this.ai(S, p, { rng }); },
   leak(S, p, v) {
-    const mine = S.hands[p].slice().sort().join();
+    const mine = (p >= 0 ? S.hands[p] : []).slice().sort().join();   // spectators (p = -1) hold nothing
     if (v.hand.slice().sort().join() !== mine) return "view.hand differs from my hand";
     const others = new Set(S.hands.flatMap((h, q) => q === p ? [] : h));
     if (JSON.stringify(v).match(/"[SHDC]\d{1,2}"|"JC"/g)?.some(c => others.has(c.slice(1, -1)))) return "another player's card is in the view";

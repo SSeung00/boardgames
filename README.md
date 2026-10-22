@@ -1,6 +1,7 @@
 # Game Room (보드게임 놀이방)
 
-Board games to play with friends on your phone: Dalmuti, Old Maid, One Card, Texas Hold'em, Go-Stop, Gem Merchant and Gold Mine.
+Board games to play with friends on your phone: Dalmuti, Old Maid, One Card, Texas Hold'em, Go-Stop, Gem Merchant, Gold Mine,
+Yacht Dice, Liar Game, Liar's Dice and Secret Numbers.
 Create a room, send the link, and play. AI players fill any empty seats. The interface is in Korean and English (🌐 toggle).
 
 **Play:** https://sseung00.github.io/boardgames/
