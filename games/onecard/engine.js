@@ -427,7 +427,7 @@ const ON_OFF = [tx("켬", "On"), tx("끔", "Off")];
 export default {
   id: "onecard",
   name,
-  icon: "🎴",
+  icon: "☝️",
   blurb: tx("무늬나 숫자를 맞춰 내고, 공격 카드로 벌칙을 떠넘겨요. 한 장 남으면 원카드!",
     "Match suit or rank and push penalties on with attack cards. Down to one? Call \"One card!\""),
   players: { min: 2, max: 6, default: 4 },

@@ -82,7 +82,7 @@
 .pk-bet{flex:0 0 auto; font-size:calc(var(--fs, 13px) * .92); font-weight:800; color:#1b1b1b; background:linear-gradient(180deg,var(--gold2),var(--gold)); border-radius:999px; padding:0 6px; line-height:1.4; font-variant-numeric:tabular-nums}
 .pk-bet.pop{animation:pkPop .45s ease}
 @keyframes pkPop{0%{transform:translateY(-8px) scale(1.25); opacity:.2} 100%{transform:none; opacity:1}}
-.pk-back{display:inline-block; width:calc(var(--fs) * .85); height:calc(var(--fs) * 1.2); border-radius:2px; background:repeating-linear-gradient(45deg,#7b2f3a 0 2px,#5c2029 2px 4px); border:1px solid #e9d7a8}
+.pk-back{display:inline-block; width:calc(var(--fs) * .85); height:calc(var(--fs) * 1.2); border-radius:2px; background:var(--bk); border:1px solid #e9d7a8}
 .pk-mini{display:inline-block; font-size:calc(var(--fs, 13px) * .88); font-weight:800; line-height:1; padding:2px 2px; border-radius:3px; background:#fffdf7; color:#1b1b1b; min-width:1.9em; text-align:center}
 .pk-mini.red{color:#c8302c}
 .pk-mini.hl{box-shadow:0 0 0 2px var(--gold2)}

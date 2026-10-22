@@ -241,7 +241,7 @@
 
 /* ---------- Bottom sheets ---------- */
 .scrim.gm-scrim{place-items:end center; padding:0}
-.modal.gm-sheet{border-radius:18px 18px 0 0; max-height:86dvh; padding:18px 16px calc(14px + env(safe-area-inset-bottom,0px)); animation:gmUp .22s cubic-bezier(.2,.9,.3,1)}
+.modal.gm-sheet{border-radius:18px 18px 0 0; max-height:calc(86dvh / var(--zoom)); padding:18px 16px calc(14px + env(safe-area-inset-bottom,0px)); animation:gmUp .22s cubic-bezier(.2,.9,.3,1)}
 .gm-sheet-in .eyebrow{margin-right:40px}
 .gm-stop{display:flex; gap:12px; align-items:flex-start; margin:4px 0 10px}
 .gm-stxt{flex:1; min-width:0}

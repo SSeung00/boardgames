@@ -3,9 +3,13 @@ import { GAMES, gameById } from "../games/registry.js";
 import { Room, cleanName, aiName, savedRoom, forgetSavedRoom } from "./host.js";
 import { net, token, hostRoom, joinRoom, Rejoin, sendConn, sendToHost, leaveNet, shareLink, Awake, lastRoom, forgetRoom, hostingHere, netLog } from "./net.js";
 import {
-  $, el, esc, prefs, savePrefs, sound, buzz, toast, modal, closeAllModals, head, buttonRow, choose, avatarHTML, avatarColor
+  $, el, esc, prefs, savePrefs, sound, buzz, toast, modal, closeAllModals, head, buttonRow, choose, avatarHTML, avatarColor, setLooks, cleanLook
 } from "./ui.js";
 import { L, loc, lang, toggleLang, onLang } from "./i18n.js";
+import { applyLook, openSettings, openProfile } from "./settings.js";
+import {
+  drawQR, shareInvite, shareLabel, inviteModal, emotePicker, showEmote, tallyHTML, confetti, recordGame, statsModal, installState, install, onInstallChange
+} from "./social.js";
 
 let room = null;              // only when I am the host (or playing solo)
 let lobbyMsg = null;          // last lobby message, for re-rendering
@@ -52,7 +56,7 @@ function toHost(msg) {
 
 net.on.hostReady = (code, reopen) => {
   const saved = reopen ? savedRoom(code) : null;
-  room = new Room({ name: prefs.name, token, code, deliver, saved });
+  room = new Room({ name: prefs.name, look: prefs.look, token, code, deliver, saved });
   if (!saved) room.lobby();
   else toast(L("방을 다시 열었습니다 — 친구들이 곧 자동으로 다시 들어옵니다", "Room reopened — your friends will reconnect automatically"));
 };
@@ -81,6 +85,7 @@ function onMessage(msg) {
   if (msg.t === "error") { if (!msg.stale) { toast(loc(msg.text)); sound.bad(); } return; }
   if (msg.t === "reject") { entryError(msg.text); leaveNet(); forgetRoom(); setBusy(false); show("home"); renderResume(); return; }
   if (msg.t === "wait") return showWait(msg);
+  if (msg.t === "emote") return showEmote(msg);
   if (msg.t === "closed") {
     leaveRoom();
     forgetRoom();
@@ -161,6 +166,21 @@ function renderResume() {
   c.querySelector(".resume-x").onclick = card.forget;
   box.appendChild(c);
 }
+/* My avatar next to the name field, and the install link */
+function renderHomeMe() {
+  $("bLook").innerHTML = avatarHTML($("inName").value.trim() || "?", 0, "lg", cleanLook(prefs.look)) + `<i>✏️</i>`;
+  const st = installState();
+  $("bInstall").hidden = !(st === "ready" || st === "ios");
+}
+/* Edit my name and avatar. In a room, the host updates everyone's screen. */
+function editProfile(roomName, seat) {
+  openProfile((name, look) => {
+    net.name = name;
+    $("inName").value = name;
+    renderHomeMe();
+    if (net.role && (lobbyMsg || game)) toHost({ t: "profile", name, look });
+  }, { name: roomName !== undefined ? roomName : $("inName").value.trim(), seat });
+}
 function showRules(E) {
   modal((box, close) => {
     head(box, playersLabel(E), `${E.icon} ${esc(loc(E.name))}`, esc(loc(E.blurb)));
@@ -184,9 +204,16 @@ $("bNetLog").onclick = () => modal((box, close) => {
 $("bSolo").onclick = () => {
   if (!needName()) return;
   net.role = "local";
-  room = new Room({ name: prefs.name, token, code: null, deliver });
+  room = new Room({ name: prefs.name, look: prefs.look, token, code: null, deliver });
   room.lobby();
 };
+$("bLook").onclick = () => editProfile();
+$("bSideOk").onclick = () => document.body.classList.add("side-ok");
+$("inName").addEventListener("input", renderHomeMe);
+$("bSettings").onclick = () => openSettings();
+$("bStats").onclick = () => statsModal(GAMES);
+$("bInstall").onclick = () => install();
+onInstallChange(renderHomeMe);
 $("bJoin").onclick = () => { if (needName()) joinRoom($("inCode").value, false, prefs.name); };
 $("inCode").addEventListener("keydown", e => { if (e.key === "Enter") $("bJoin").click(); });
 
@@ -207,43 +234,77 @@ function segField(parent, label, values, current, onPick, fmt, disabled, note) {
   parent.appendChild(f);
 }
 
+/* Names already shown in this room's lobby — newcomers get a short "just arrived" animation */
+let lobbySeen = { code: null, names: new Set() };
+
 function showLobby(msg) {
   lobbyMsg = msg; waitMsg = null;
   closeAllModals();
   unmountGame();
   show("lobby");
+  setLooks(msg.players);
   const sh = $("lobbySheet"), isHost = msg.you === 0, st = msg.settings, local = !msg.code;
   const E = gameById(st.game).engine;
+  const me = msg.players[msg.you] || { name: prefs.name };
   sh.innerHTML = "";
-  sh.appendChild(langButton());
+  sh.appendChild(topButtons(!local));
   if (local) {
     sh.insertAdjacentHTML("beforeend", `<div class="eyebrow">${L("혼자 하기", "Solo")}</div><h2>${L("AI 와 한 판", "Play against AI")}</h2>` +
       `<p>${L("게임을 고르고 시작하세요. 빈자리는 모두 AI 가 앉습니다.", "Pick a game and start. AI players fill every empty seat.")}</p>`);
   } else {
-    sh.insertAdjacentHTML("beforeend", `<div class="eyebrow">${L("대기실", "Lobby")}</div>` +
+    sh.insertAdjacentHTML("beforeend", `<div class="eyebrow">${L(`대기실 · 방 ${esc(msg.code)}`, `Lobby · room ${esc(msg.code)}`)}</div>` +
       `<h2>${isHost ? L("친구를 부르세요", "Invite your friends") : L("방장을 기다리는 중", "Waiting for the host")}</h2>` +
       `<p>${isHost
         ? L("방장의 화면이 게임을 진행합니다 — <b>게임하는 동안 이 화면을 켜 둔 채로</b> 두세요.", "The host's screen runs the game — <b>keep this screen on while playing</b>.")
         : L("잠깐 다른 앱에 다녀와도 자동으로 다시 연결됩니다.", "If you switch apps for a moment, you will reconnect automatically.")}</p>`);
-    const box = el("div", "codebox", `<div><small>${L("방 코드", "Room code")}</small><b>${esc(msg.code)}</b></div>`);
-    const canShare = typeof navigator.share === "function" && matchMedia("(pointer:coarse)").matches;
-    const b = el("button", "btn", canShare ? L("초대 링크 보내기", "Send invite link") : L("초대 링크 복사", "Copy invite link"));
-    b.onclick = async () => {
-      const link = shareLink(msg.code);
-      if (canShare) {
-        try { await navigator.share({ title: L("보드게임 놀이방", "Game Room"), text: L(`같이 해요! 방 코드 ${msg.code}`, `Join my game! Room code ${msg.code}`), url: link }); return; }
-        catch (e) { if (e && e.name === "AbortError") return; }
-      }
-      try { await navigator.clipboard.writeText(link); toast(L("초대 링크를 복사했습니다", "Invite link copied")); }
-      catch (e) { prompt(L("이 링크를 복사해 보내세요", "Copy and send this link"), link); }
-    };
-    box.appendChild(b);
-    sh.appendChild(box);
-    const ul = el("ul", "plist");
-    msg.players.forEach((p, i) => ul.appendChild(el("li", p.away ? "away" : "", `${avatarHTML(p.name, i)}<span class="nm">${esc(p.name)}</span>` +
-      (p.away ? `<span class="tag away">${L("재접속 중", "Reconnecting")}</span>` : "") +
-      (p.host ? `<span class="tag host">${L("방장", "Host")}</span>` : "") + (i === msg.you ? `<span class="tag me">${L("나", "Me")}</span>` : ""))));
-    sh.appendChild(ul);
+  }
+
+  // Me: big card with my avatar, name and short message
+  const card = el("div", "mecard", `${avatarHTML(me.name, msg.you, "xl", me.look || null)}<div class="me-t"><b>${esc(me.name)}</b>` +
+    `<span class="me-tags">${isHost && !local ? `<span class="tag host">${L("방장", "Host")}</span>` : ""}<span class="tag me">${L("나", "Me")}</span></span>` +
+    (me.look && me.look.m ? `<small>“${esc(me.look.m)}”</small>` : `<small class="faint">${L("이름과 얼굴을 꾸며 보세요", "Change your name and avatar")}</small>`) +
+    `</div><button class="btn small me-edit">✏️ ${L("꾸미기", "Edit")}</button>`);
+  card.onclick = () => editProfile(me.name, msg.you);
+  sh.appendChild(card);
+
+  if (!local) {
+    // Invite: QR code (tap for a big one), the code, and the link
+    const link = shareLink(msg.code);
+    const inv = el("div", "invite", `<button class="qr mini" aria-label="${L("QR 크게 보기", "Show a big QR code")}"></button>` +
+      `<div class="inv-mid"><small>${L("방 코드", "Room code")}</small><b>${esc(msg.code)}</b>` +
+      `<span class="inv-hint">${L("QR을 누르면 크게 보여요", "Tap the QR code to enlarge")}</span></div>`);
+    const q = inv.querySelector(".qr");
+    drawQR(q, link);
+    q.onclick = () => inviteModal(link, msg.code);
+    const sb = el("button", "btn small primary inv-send", esc(shareLabel()));
+    sb.onclick = () => shareInvite(link, msg.code);
+    inv.querySelector(".inv-mid").appendChild(sb);
+    sh.appendChild(inv);
+
+    // Everyone else: who is here
+    if (lobbySeen.code !== msg.code) lobbySeen = { code: msg.code, names: null };
+    const others = msg.players.map((p, i) => ({ ...p, i })).filter(p => p.i !== msg.you);
+    const humans0 = msg.players.length, ai0 = Math.max(0, (msg.seats || humans0) - humans0);
+    sh.appendChild(el("div", "eyebrow mt", L(`함께하는 사람 · ${others.length}명`, `Here with you · ${others.length}`)));
+    const crowd = el("div", "crowd");
+    for (const p of others) {
+      const isNew = lobbySeen.names && !lobbySeen.names.has(p.name);
+      const sub = p.away ? `<small class="away">${L("재접속 중", "Reconnecting")}</small>`
+        : p.host ? `<small class="host">👑 ${L("방장", "Host")}</small>`
+        : p.look && p.look.m ? `<small>“${esc(p.look.m)}”</small>` : `<small class="in">${L("들어옴", "Joined")}</small>`;
+      crowd.appendChild(el("div", "pal" + (p.away ? " away" : "") + (isNew ? " new" : ""), `${avatarHTML(p.name, p.i, "xl", p.look || null)}<b>${esc(p.name)}</b>${sub}`));
+    }
+    if (ai0) crowd.appendChild(el("div", "pal ghost", `<span class="av xl ghost-av"><i>🤖</i></span><b>${L(`AI ${ai0}명`, `${ai0} AI`)}</b><small>${L("빈자리", "empty seats")}</small>`));
+    if (!others.length) crowd.appendChild(el("div", "crowd-empty", isHost
+      ? L("아직 아무도 없어요. QR을 보여 주거나 링크를 보내 친구를 불러 보세요.", "Nobody yet. Show the QR code or send the link to invite friends.")
+      : L("방장을 기다리는 중…", "Waiting for the host…")));
+    sh.appendChild(crowd);
+    lobbySeen.names = new Set(msg.players.map(p => p.name));
+  }
+  if (msg.tally && msg.tally.length) {
+    sh.appendChild(el("div", "eyebrow mt", L("오늘의 점수판", "Tonight's scoreboard")));
+    sh.insertAdjacentHTML("beforeend", tallyHTML(msg.tally, me.name));
+    sh.appendChild(el("small", "set-note", esc(L("1등 3점 · 2등 2점 · 3등 1점, 방을 닫을 때까지 쌓입니다.", "1st 3 pts · 2nd 2 · 3rd 1, kept until the room is closed."))));
   }
 
   // Game picker
@@ -277,6 +338,10 @@ function showLobby(msg) {
     v => ({ easy: L("쉬움", "Easy"), normal: L("보통", "Normal"), hard: L("어려움", "Hard") })[v], !isHost);
   segField(sh, L("제한 시간", "Turn timer"), [15, 30, 60, 0], st.timer, v => toHost({ t: "setting", key: "timer", value: v }),
     v => v ? L(v + "초", v + "s") : L("없음", "Off"), !isHost);
+  if (!local) segField(sh, L("연결이 끊긴 사람", "If someone drops out"), ["ai", "wait"], st.away === "wait" ? "wait" : "ai",
+    v => toHost({ t: "setting", key: "away", value: v }), v => v === "ai" ? L("20초 뒤 AI 가 대신", "AI after 20 s") : L("돌아올 때까지 기다리기", "Wait for them"), !isHost,
+    st.away === "wait" ? L("그 사람 차례에서 게임이 멈춥니다. 방장은 언제든 「AI 에게 맡기기」를 누를 수 있습니다.", "The game pauses at their turn. The host can press \"Let AI play\" at any time.")
+      : L("돌아오면 언제든 자리를 되찾습니다.", "They get their seat back whenever they return."));
   for (const s of E.settings || []) {
     segField(sh, loc(s.label), s.values, st.opts[s.key], v => toHost({ t: "setting", key: "opt." + s.key, value: v }),
       v => (s.labels ? loc(s.labels[s.values.indexOf(v)]) : v), !isHost, loc(s.note));
@@ -303,14 +368,15 @@ function showWait(msg) {
   unmountGame();
   show("lobby");
   const sh = $("lobbySheet"), E = gameById(msg.game).engine;
+  setLooks(localPlayers(msg.players));
   sh.innerHTML = "";
-  sh.appendChild(langButton());
+  sh.appendChild(topButtons(false));
   sh.insertAdjacentHTML("beforeend", `<div class="eyebrow">${L("대기 중", "Waiting")}</div>` +
     `<h2>${L("게임 진행 중", "Game in progress")}</h2>` +
     `<p>${L(`<b>${E.icon} ${esc(loc(E.name))}</b> — 이번 판이 끝나고 방장이 다음 판을 시작하면 함께합니다. 이 화면을 켜 둔 채로 기다려 주세요.`,
             `<b>${E.icon} ${esc(loc(E.name))}</b> — you'll join when this game ends and the host starts the next one. Keep this screen open.`)}</p>`);
   const ul = el("ul", "plist");
-  msg.players.forEach((p, i) => ul.appendChild(el("li", "", `${avatarHTML(aiName(p.name, lang), i)}<span class="nm">${esc(p.kind === "ai" ? aiName(p.name, lang) : p.name)}</span>` +
+  msg.players.forEach((p, i) => ul.appendChild(el("li", "", `${avatarHTML(p.kind === "ai" ? aiName(p.name, lang) : p.name, i)}<span class="nm">${esc(p.kind === "ai" ? aiName(p.name, lang) : p.name)}</span>` +
     (p.kind === "ai" ? '<span class="tag">AI</span>' : "") + (p.host ? `<span class="tag host">${L("방장", "Host")}</span>` : ""))));
   for (const n of msg.waiting || []) ul.appendChild(el("li", "", `${avatarHTML(n, 9)}<span class="nm">${esc(n)}</span><span class="tag me">${L("대기", "Waiting")}</span>`));
   sh.appendChild(ul);
@@ -327,6 +393,22 @@ function langButton() {
   b.setAttribute("aria-label", L("언어 바꾸기", "Change language"));
   b.onclick = toggleLang;
   return b;
+}
+/* Top right of the lobby: language, reactions (online), settings */
+function topButtons(online) {
+  const box = el("div", "topbtns");
+  box.appendChild(langButton());
+  if (online) {
+    const e = el("button", "roundbtn", "😀");
+    e.setAttribute("aria-label", L("반응 보내기", "Send a reaction"));
+    e.onclick = () => emotePicker(e, id => toHost({ t: "emote", e: id }));
+    box.appendChild(e);
+  }
+  const s = el("button", "roundbtn", "⚙️");
+  s.setAttribute("aria-label", L("설정", "Settings"));
+  s.onclick = () => openSettings();
+  box.appendChild(s);
+  return box;
 }
 
 /* ===================== Game screen ===================== */
@@ -384,6 +466,7 @@ async function onState(msg) {
     game = { id: msg.game, run: msg.run, ui: null, last: null, loading: null, mod: null };
     renderTitle();
     overShown = 0; lastAskId = 0;
+    $("bEmote").hidden = net.role === "local";
     const cur = game;
     cur.loading = import(g.ui).then(mod => { cur.mod = mod; mountUI(cur); });
   }
@@ -392,6 +475,7 @@ async function onState(msg) {
   if (game !== g) return;
   msg.rawPlayers = msg.players;
   msg.players = localPlayers(msg.rawPlayers);
+  setLooks(msg.players);
   g.last = msg;
   for (const e of msg.ev) {
     if (!e.text) continue;
@@ -431,6 +515,17 @@ function renderShell(m) {
   const away = m.pending.find(a => a.away);
   if (away && !mine) status = L(`${names[away.p]} 님 재접속 기다리는 중…`, `Waiting for ${names[away.p]} to reconnect…`);
   $("gStatus").textContent = status;
+  // "Wait for them" rooms: the host can hand a missing player's seat to the AI
+  const awayBar = $("awayBar"), waiting = room && !m.over && m.settings.away === "wait" ? m.pending.filter(a => a.away) : [];
+  awayBar.hidden = !waiting.length;
+  awayBar.innerHTML = "";
+  for (const a of waiting) {
+    const row = el("div", "awayrow", `<span>${avatarHTML(names[a.p], a.p, "sm")} ${esc(L(`${names[a.p]} 님을 기다리는 중`, `Waiting for ${names[a.p]}`))}</span>`);
+    const b = el("button", "btn small", L("AI 에게 맡기기", "Let AI play"));
+    b.onclick = () => toHost({ t: "takeover", p: a.p });
+    row.appendChild(b);
+    awayBar.appendChild(row);
+  }
   document.body.classList.toggle("myturn", !!mine);
   if (mine && mine.id !== lastAskId) {
     lastAskId = mine.id;
@@ -459,6 +554,8 @@ function showResults(m) {
   const res = (m.results || []).slice().sort((a, b) => a.rank - b.rank);
   const meRank = (res.find(r => r.p === m.me) || {}).rank;
   meRank === 1 ? sound.win() : sound.lose();
+  if (meRank === 1) confetti();
+  recordGame(game.id, m.run, meRank, m.players.length);
   const isHost = !!room;
   const ordinal = n => (n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th");
   modal((box, close) => {
@@ -472,6 +569,11 @@ function showResults(m) {
         `<span class="v">${r.score === undefined ? "" : esc(typeof r.score === "number" ? r.score.toLocaleString() : loc(r.score))}</span>`));
     }
     box.appendChild(ul);
+    // After the second game of the evening, the running scoreboard too
+    if (m.tally && m.tally.some(t => t.games > 1)) {
+      box.appendChild(el("div", "eyebrow mt", L("오늘의 점수판", "Tonight's scoreboard")));
+      box.insertAdjacentHTML("beforeend", tallyHTML(m.tally, m.players[m.me] && m.players[m.me].name));
+    }
     if (isHost) buttonRow(box, [{ label: L("대기실로", "Back to lobby"), on: () => { close(); toHost({ t: "lobby" }); } },
                                 { label: L("한 판 더", "Play again"), primary: true, on: () => { close(); toHost({ t: "again" }); } }]);
     else box.appendChild(el("div", "waiting", `<span class="dot"></span>${L("방장이 다음 게임을 고르는 중", "The host is choosing the next game")}`));
@@ -486,18 +588,25 @@ $("bLog").onclick = () => modal(box => {
   for (const x of logLines.slice().reverse()) ul.appendChild(el("li", "", esc(nameText(x.text, x.players))));
   box.appendChild(ul);
 });
-$("bSound").onclick = () => { prefs.sound = !prefs.sound; savePrefs(); renderSound(); if (prefs.sound) sound.join(); };
-function renderSound() { $("bSound").setAttribute("aria-pressed", String(prefs.sound)); $("bSound").textContent = prefs.sound ? "🔊" : "🔇"; }
-$("bLeave").onclick = () => {
-  const isHost = !!room, online = net.role === "host";
+$("bEmote").onclick = () => emotePicker($("bEmote"), id => toHost({ t: "emote", e: id }));
+/* Menu: invite, settings, sound, and leaving */
+$("bMenu").onclick = () => {
+  const isHost = !!room, online = net.role === "host" || net.role === "guest";
   modal((box, close) => {
-    head(box, "", isHost && online ? L("방장 메뉴", "Host menu") : L("나가시겠어요?", "Leave the game?"),
-      isHost && online ? L("「방 닫기」를 누르면 모두의 게임이 끝납니다. 창을 그냥 닫으면 방은 남아 있어 같은 링크로 다시 열 수 있습니다.",
+    head(box, "", L("메뉴", "Menu"),
+      isHost && net.role === "host" ? L("「방 닫기」를 누르면 모두의 게임이 끝납니다. 창을 그냥 닫으면 방은 남아 있어 같은 링크로 다시 열 수 있습니다.",
                           "\"Close room\" ends the game for everyone. If you just close this page, the room is kept and can be reopened from the same link.")
-        : !isHost ? L("AI 가 대신 둡니다. 같은 링크와 같은 이름으로 다시 들어오면 자리를 되찾습니다.", "AI will play for you. Rejoin with the same link and name to take your seat back.") : "");
+        : !isHost ? L("나가면 AI 가 대신 둡니다. 같은 링크와 같은 이름으로 다시 들어오면 자리를 되찾습니다.", "If you leave, AI plays for you. Rejoin with the same link and name to take your seat back.") : "");
+    const list = el("div", "choices");
+    const item = (label, on) => { const b = el("button", "choice", `<b>${label}</b>`); b.onclick = on; list.appendChild(b); };
+    if (online && net.code) item(L("📨 친구 초대 (QR · 링크)", "📨 Invite friends (QR · link)"), () => { close(); inviteModal(shareLink(net.code), net.code); });
+    item(L("⚙️ 설정 (테마 · 카드 · 화면 크기)", "⚙️ Settings (theme · cards · screen size)"), () => { close(); openSettings(); });
+    item(prefs.sound ? L("🔇 소리 끄기", "🔇 Sound off") : L("🔊 소리 켜기", "🔊 Sound on"),
+      () => { prefs.sound = !prefs.sound; savePrefs(); close(); if (prefs.sound) sound.join(); toast(prefs.sound ? L("소리 켬", "Sound on") : L("소리 끔", "Sound off")); });
+    box.appendChild(list);
     const btns = [{ label: L("계속하기", "Keep playing"), on: () => close() }];
     if (isHost) btns.push({ label: L("대기실로", "Back to lobby"), on: () => { close(); toHost({ t: "lobby" }); } });
-    if (isHost && online) btns.push({ label: L("방 닫기", "Close room"), danger: true, on: () => { close(); closeRoom(); } });
+    if (isHost && net.role === "host") btns.push({ label: L("방 닫기", "Close room"), danger: true, on: () => { close(); closeRoom(); } });
     else btns.push({ label: L("나가기", "Leave"), danger: true, on: () => { close(); leaveRoom(!isHost); } });
     buttonRow(box, btns);
   });
@@ -508,6 +617,7 @@ for (const b of document.querySelectorAll(".langbtn")) b.onclick = toggleLang;
 onLang(() => {
   applyStatic();
   renderHomeGames();
+  renderHomeMe();
   if (!$("lobby").hidden && lobbyMsg) showLobby(lobbyMsg);
   else if (!$("lobby").hidden && waitMsg) showWait(waitMsg);
   renderResume();
@@ -531,11 +641,16 @@ window.addEventListener("beforeunload", e => { if (net.role === "host" && room &
 window.BG = { get room() { return room; }, get game() { return game; }, get net() { return net; }, dropForTest() { try { net.hostConn.close(); } catch (e) { } } };
 
 /* ===================== Start ===================== */
+applyLook();
 applyStatic();
 renderHomeGames();
-renderSound();
 $("inName").value = prefs.name || "";
+renderHomeMe();
 net.name = prefs.name;
+/* Offline copy of the site (solo play without internet) — always fetches fresh files when online, see sw.js */
+if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
+  addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => { }));
+}
 const hashCode = (location.hash || "").replace("#", "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 show("home");
 renderResume();

@@ -1,0 +1,39 @@
+/* Offline copy of the site. Network first: when online every file is fetched fresh (so a new version never mixes with old
+   files); the copy is only used without a connection, e.g. to play solo offline. Online rooms still need the internet. */
+const CACHE = "bg-site-v1";
+const FILES = [
+  "./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-180.png",
+  "core/app.js", "core/cards.js", "core/host.js", "core/i18n.js", "core/net.js", "core/rng.js", "core/settings.js", "core/social.js",
+  "core/style.css", "core/ui.js", "games/registry.js",
+  "games/dalmuti/ai.js", "games/dalmuti/engine.js", "games/dalmuti/policy.js", "games/dalmuti/rules.js", "games/dalmuti/style.css", "games/dalmuti/ui.js",
+  "games/gems/engine.js", "games/gems/style.css", "games/gems/ui.js",
+  "games/gostop/cards.js", "games/gostop/engine.js", "games/gostop/style.css", "games/gostop/ui.js",
+  "games/mine/engine.js", "games/mine/style.css", "games/mine/ui.js",
+  "games/oldmaid/engine.js", "games/oldmaid/style.css", "games/oldmaid/ui.js",
+  "games/onecard/engine.js", "games/onecard/style.css", "games/onecard/ui.js",
+  "games/poker/engine.js", "games/poker/style.css", "games/poker/ui.js"
+];
+const CDN = /^(cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com)$/;
+
+self.addEventListener("install", e => {
+  self.skipWaiting();
+  e.waitUntil(caches.open(CACHE).then(c => Promise.all(FILES.map(f => c.add(new Request(f, { cache: "no-cache" })).catch(() => { })))));
+});
+self.addEventListener("activate", e => {
+  e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+});
+self.addEventListener("fetch", e => {
+  const req = e.request;
+  if (req.method !== "GET") return;
+  const url = new URL(req.url), same = url.origin === location.origin;
+  if (!same && !CDN.test(url.hostname)) return;          // signalling, TURN credentials etc. are never cached
+  e.respondWith(
+    fetch(req, same ? { cache: "no-cache" } : undefined)
+      .then(res => {
+        if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }
+        return res;
+      })
+      .catch(() => caches.match(req, { ignoreSearch: true })
+        .then(hit => hit || (req.mode === "navigate" ? caches.match("index.html") : Response.error())))
+  );
+});

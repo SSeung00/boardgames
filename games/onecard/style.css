@@ -78,7 +78,7 @@
   display:flex; flex-direction:column; align-items:center; gap:4px; flex:0 0 auto}
 .oc-deck:disabled{cursor:default}
 .oc-stack{position:relative; display:block}
-.oc-deck .pc{box-shadow:2px 2px 0 #e9d7a8, 4px 4px 0 #5c2029, 0 8px 16px rgba(0,0,0,.5); transition:transform .15s}
+.oc-deck .pc{box-shadow:2px 2px 0 var(--bk-edge), 4px 4px 0 var(--bk-in), 0 8px 16px rgba(0,0,0,.5); transition:transform .15s}
 .oc-deck.can .pc{box-shadow:0 0 0 3px var(--gold2), 3px 3px 0 #5c2029, 0 8px 18px rgba(0,0,0,.5); animation:ocBob 1.4s ease-in-out infinite}
 .oc-deck.atk .pc{box-shadow:0 0 0 3px var(--red), 3px 3px 0 #5c2029, 0 0 22px rgba(217,83,79,.6)}
 .oc-deck.can:active .pc{transform:translateY(3px)}

@@ -19,7 +19,12 @@ export const LS = {
   put(k, v) { LS.set(k, JSON.stringify(v)); }
 };
 
-export const prefs = Object.assign({ name: "", sound: true }, LS.json("prefs", {}));
+/* look: my avatar {e: emoji, c: color, m: short message} (null = initial letter); theme · back · accent · scale · motion: see core/settings.js */
+export const prefs = (() => {
+  const saved = LS.json("prefs", {});
+  if (saved.vibe === undefined && saved.sound === false) saved.vibe = false;   // the sound switch used to mute vibration too
+  return Object.assign({ name: "", sound: true, vibe: true, look: null, theme: "felt", back: "wine", accent: "orange", scale: "auto", motion: "on" }, saved);
+})();
 export const savePrefs = () => LS.put("prefs", prefs);
 
 /* ---------- Sound (synthesized effects) ---------- */
@@ -70,10 +75,11 @@ export const sound = {
   good() { [659, 784].forEach((f, i) => tone(f, .22, { type: "triangle", gain: .08, delay: i * .09 })); },
   bad() { tone(220, .25, { type: "triangle", gain: .08, slide: -60 }); },
   join() { tone(523, .12, { gain: .06 }); tone(784, .16, { gain: .05, delay: .08 }); },
+  pop() { tone(880, .07, { gain: .05, slide: 300 }); },
   win() { [523, 659, 784, 1047].forEach((f, i) => tone(f, .34, { type: "triangle", gain: .1, delay: i * .12 })); },
   lose() { [440, 370, 311].forEach((f, i) => tone(f, .34, { type: "triangle", gain: .07, delay: i * .14 })); }
 };
-export const buzz = pattern => { try { if (prefs.sound && navigator.vibrate) navigator.vibrate(pattern); } catch (e) { } };
+export const buzz = pattern => { try { if (prefs.vibe && navigator.vibrate) navigator.vibrate(pattern); } catch (e) { } };
 
 /* ---------- Toasts ---------- */
 let toastT = 0;
@@ -140,9 +146,36 @@ export function choose(title, text, options, opt = {}) {
   }, { dismissible: opt.dismissible !== false });
 }
 
-/* ---------- Avatars ---------- */
-const AVATAR_COLORS = ["#c9774a", "#5f9e6e", "#5b84c4", "#b05f9a", "#c4a24a", "#4aa3a8", "#8a6fc4", "#c45b5b", "#7a8a5a", "#a87a4a"];
+/* ---------- Avatars ----------
+   People can pick an emoji and a colour (prefs.look); AI seats show their animal. Without a look, the first letter of the name
+   on the seat colour. Games call avatarHTML(name, seat) — the looks of the current room are looked up by name. */
+export const AVATAR_COLORS = ["#c9774a", "#5f9e6e", "#5b84c4", "#b05f9a", "#c4a24a", "#4aa3a8", "#8a6fc4", "#c45b5b", "#7a8a5a", "#a87a4a"];
+export const LOOK_EMOJI = ["😀", "😎", "🤠", "🥳", "🤓", "😇", "🤩", "😴", "🤔", "😈", "👻", "🤖", "👽", "🎃", "🥷", "🧙",
+  "🦁", "🐯", "🐻", "🐨", "🐶", "🐸", "🐵", "🐷", "🐮", "🦄", "🐲", "🐙", "🐳", "🦋", "🍀", "🌸", "⭐", "🔥", "⚡", "🍕", "🍩", "🎸", "⚽", "👑"];
+export const LOOK_MSG_MAX = 20;
+/* AI seat animals (Korean and English names, see AI_NAMES in host.js) */
+const AI_FACE = { 다람쥐: "🐿️", Squirrel: "🐿️", 너구리: "🦝", Raccoon: "🦝", 부엉이: "🦉", Owl: "🦉", 고양이: "🐱", Cat: "🐱",
+  여우: "🦊", Fox: "🦊", 판다: "🐼", Panda: "🐼", 수달: "🦦", Otter: "🦦", 펭귄: "🐧", Penguin: "🐧", 고슴도치: "🦔", Hedgehog: "🦔", 토끼: "🐰", Rabbit: "🐰" };
+/* A look as sent by someone else: keep only known values */
+export function cleanLook(x) {
+  if (!x || typeof x !== "object") return null;
+  const e = LOOK_EMOJI.includes(x.e) ? x.e : "", c = AVATAR_COLORS.includes(x.c) ? x.c : "";
+  const m = String(x.m || "").replace(/\s+/g, " ").trim().slice(0, LOOK_MSG_MAX);
+  return e || c || m ? { e, c, m } : null;
+}
+const looks = new Map();
+/* players: [{name, kind, look}] as shown on this screen */
+export function setLooks(players) {
+  looks.clear();
+  for (const p of players || []) {
+    if (p.kind === "ai" && AI_FACE[p.name]) looks.set(p.name, { e: AI_FACE[p.name] });
+    else if (p.look) looks.set(p.name, p.look);
+  }
+}
 export const avatarColor = p => AVATAR_COLORS[p % AVATAR_COLORS.length];
-export function avatarHTML(name, p, extra = "") {
-  return `<span class="av ${extra}" style="--ac:${avatarColor(p)}">${esc([...String(name || "?")][0] || "?")}</span>`;
+export function avatarHTML(name, p, extra = "", look) {
+  const lk = look !== undefined ? look : looks.get(name);
+  const color = (lk && lk.c) || avatarColor(p);
+  if (lk && lk.e) return `<span class="av emo ${extra}" style="--ac:${color}"><i>${lk.e}</i></span>`;
+  return `<span class="av ${extra}" style="--ac:${color}">${esc([...String(name || "?")][0] || "?")}</span>`;
 }

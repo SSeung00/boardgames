@@ -1,7 +1,7 @@
 /* Networking — PeerJS (WebRTC). The host's browser and the guests connect directly, without a server.
    Host: hostRoom() → room code (or hostRoom(code) to reopen a saved room). Guest: joinRoom(code).
    Guests reconnect automatically after a drop and keep waiting while the host reopens the room. */
-import { LS, stickyToast, toast, steadySleep } from "./ui.js";
+import { LS, prefs, stickyToast, toast, steadySleep } from "./ui.js";
 import { L, tx } from "./i18n.js";
 
 const PREFIX = "bg-kr-v1-";
@@ -200,7 +200,7 @@ export async function joinRoom(code, quiet, name, onMissing) {
       net.on.busy(false);
       history.replaceState(null, "", "#" + code);
       rememberRoom(code, "guest");
-      conn.send({ t: "hello", name: net.name, token });
+      conn.send({ t: "hello", name: net.name, look: prefs.look, token });
     });
     conn.on("data", msg => {
       if (net.hostConn !== conn) return;

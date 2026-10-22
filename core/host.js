@@ -18,10 +18,13 @@
    - Everything is saved in the host's localStorage after every change. If the host's page closes or reloads,
      opening the same link (or the home screen's "Reopen" card) restores the room and the game where it left off.
    - People are identified by a per-tab token; someone who returns from another browser gets their seat back by name.
-   - A disconnected player keeps their seat for a grace period before the AI plays for them.
-   - People who arrive during a game wait and join from the next game. */
+   - A disconnected player keeps their seat for a grace period before the AI plays for them — or, with the "wait" setting,
+     the game waits until they come back or the host hands their seat to the AI.
+   - People who arrive during a game wait and join from the next game.
+   - The room keeps a scoreboard of the evening (tally) until it is closed. */
 import { GAMES, gameById } from "../games/registry.js";
-import { LS, toast, sound, steadySleep as hostSleep } from "./ui.js";
+import { LS, toast, sound, steadySleep as hostSleep, cleanLook } from "./ui.js";
+import { EMOTE_IDS } from "./social.js";
 import { L, tx } from "./i18n.js";
 
 /* AI seat names. The host picks the Korean name; each viewer's screen shows it in their own language (see aiName). */
@@ -34,6 +37,7 @@ const GRACE_DROP = 20000;      // a dropped player's seat waits this long before
 const GRACE_REOPEN = 60000;    // after the host reopens the room, everyone gets longer to reconnect
 const SILENT = 15000;          // a guest that sends nothing (not even a ping) for this long counts as disconnected
 const SAVE_TTL = 12 * 3600 * 1000;
+const EMOTE_GAP = 800;         // at most one reaction per person in this time
 export const MAX_ROOM = Math.max(...GAMES.map(g => g.engine.players.max));
 
 
@@ -49,17 +53,18 @@ export function forgetSavedRoom() { LS.set("host", ""); }
 
 export class Room {
   /* deliver(player, msg): send a message to a person (app.js handles connection vs. local delivery) */
-  constructor({ name, token, code, deliver, saved }) {
+  constructor({ name, look, token, code, deliver, saved }) {
     this.code = code;              // null = solo (AI only)
     this.deliver = deliver;
     this.waiting = [];             // people who arrived during a game: {name, token, conn, online}
     this.runner = null;
     this.alive = true;
+    this.tally = [];               // scoreboard of the evening: [{name, look, pts, wins, games}]
     if (code) this.watch();
-    if (saved) return this.restore(saved, name, token);
-    this.players = [{ name: cleanName(name), token, kind: "human", local: true, online: true, conn: null }];
+    if (saved) return this.restore(saved, name, token, look);
+    this.players = [{ name: cleanName(name), look: cleanLook(look), token, kind: "human", local: true, online: true, conn: null }];
     const pref = LS.json("room", {});
-    this.settings = Object.assign({ game: GAMES[0].id, level: "normal", timer: 30, opts: {} }, pref);
+    this.settings = Object.assign({ game: GAMES[0].id, level: "normal", timer: 30, away: "ai", opts: {} }, pref);
     // Online rooms start in "auto" (AI only fills up to the game's minimum); solo play starts with the game's usual size
     this.settings.seats = code ? "auto" : 0;
     if (!gameById(this.settings.game)) this.settings.game = GAMES[0].id;
@@ -94,18 +99,19 @@ export class Room {
     try {
       const r = this.runner;
       LS.put("host", {
-        code: this.code, at: Date.now(), settings: this.settings,
-        players: this.players.map(p => ({ name: p.name, token: p.token, kind: p.kind })),
-        waiting: this.waiting.map(w => ({ name: w.name, token: w.token })),
-        game: r && r.alive ? { id: r.E.id, S: r.S, runId: r.runId, seq: r.seq, settings: r.settings, finished: r.finished } : null
+        code: this.code, at: Date.now(), settings: this.settings, tally: this.tally,
+        players: this.players.map(p => ({ name: p.name, look: p.look || null, token: p.token, kind: p.kind, handed: !!p.handed })),
+        waiting: this.waiting.map(w => ({ name: w.name, look: w.look || null, token: w.token })),
+        game: r && r.alive ? { id: r.E.id, S: r.S, runId: r.runId, seq: r.seq, settings: r.settings, finished: r.finished, recorded: !!r.recorded } : null
       });
     } catch (e) { console.error("save failed", e); }
   }
-  restore(s, name, token) {
-    this.settings = s.settings;
+  restore(s, name, token, look) {
+    this.settings = Object.assign({ away: "ai" }, s.settings);
+    this.tally = s.tally || [];
     const grace = Date.now() + GRACE_REOPEN;
     this.players = s.players.map((p, i) => i === 0
-      ? { name: cleanName(p.name || name), token, kind: "human", local: true, online: true, conn: null }
+      ? { name: cleanName(p.name || name), look: cleanLook(look), token, kind: "human", local: true, online: true, conn: null }
       : { ...p, local: false, online: p.kind === "ai", conn: null, graceUntil: p.kind === "human" ? grace : 0 });
     this.waiting = (s.waiting || []).map(w => ({ ...w, conn: null, online: false }));
     if (s.game && gameById(s.game.id)) {
@@ -151,10 +157,10 @@ export class Room {
     if (w && msg.t === "bye") { this.waiting.splice(this.waiting.indexOf(w), 1); this.save(); }
   }
   hello(conn, msg) {
-    const name = cleanName(msg.name);
+    const name = cleanName(msg.name), look = cleanLook(msg.look);
     const attach = (pl, p) => {
       if (pl.conn && pl.conn !== conn) try { pl.conn.close(); } catch (e) { }
-      pl.conn = conn; pl.online = true; pl.token = msg.token; pl.graceUntil = 0;
+      pl.conn = conn; pl.online = true; pl.token = msg.token; pl.graceUntil = 0; pl.handed = false; pl.look = look;
       if (this.runner) this.runner.presence(p, tx(`{${p}} 님이 다시 들어왔습니다`, `{${p}} is back`));
       else this.lobby();
       this.save();
@@ -166,7 +172,7 @@ export class Room {
     let w = this.waiting.find(x => x.token === msg.token) || (this.runner && this.waiting.find(x => !x.online && x.name === name));
     if (w) {
       if (w.conn && w.conn !== conn) try { w.conn.close(); } catch (e) { }
-      w.conn = conn; w.online = true; w.token = msg.token;
+      w.conn = conn; w.online = true; w.token = msg.token; w.look = look;
       this.sendWait(w);
       return;
     }
@@ -176,20 +182,20 @@ export class Room {
     const unique = this.uniqueName(name);
     if (this.runner) {
       // A game is running (or its results are on screen): wait and join from the next game
-      w = { name: unique, token: msg.token, conn, online: true };
+      w = { name: unique, look, token: msg.token, conn, online: true };
       this.waiting.push(w);
       this.sendWait(w);
       toast(L(`${unique} 님이 들어왔습니다 — 다음 판부터 함께합니다`, `${unique} joined — they'll play from the next game`)); sound.join();
       if (this.runner.finished) this.runner.broadcast(); else this.save();
       return;
     }
-    this.players.push({ name: unique, token: msg.token, kind: "human", conn, local: false, online: true });
+    this.players.push({ name: unique, look, token: msg.token, kind: "human", conn, local: false, online: true });
     this.fixSettings();
     toast(L(`${unique} 님이 들어왔습니다`, `${unique} joined`)); sound.join();
     this.lobby();
   }
-  uniqueName(name) {
-    const taken = new Set([...this.humans(), ...this.waiting].map(p => p.name));
+  uniqueName(name, self) {
+    const taken = new Set([...this.humans(), ...this.waiting].filter(p => p !== self).map(p => p.name));
     if (!taken.has(name)) return name;
     for (let k = 2; ; k++) if (!taken.has(name.slice(0, 8) + k)) return name.slice(0, 8) + k;
   }
@@ -213,9 +219,12 @@ export class Room {
       return;
     }
     pl.graceUntil = bye ? 0 : Date.now() + GRACE_DROP;
+    if (bye) pl.handed = true;         // left on purpose: no need to wait for them
     this.runner.presence(p, bye
       ? tx(`{${p}} 님이 나갔습니다 — AI 가 대신 둡니다 (같은 이름으로 다시 들어오면 자리를 되찾습니다)`, `{${p}} left — AI plays for them (rejoin with the same name to take the seat back)`)
-      : tx(`{${p}} 님의 연결이 끊겼습니다 — ${GRACE_DROP / 1000}초 기다린 뒤 AI 가 대신 둡니다`, `{${p}} disconnected — AI takes over after ${GRACE_DROP / 1000}s`));
+      : this.runner.settings.away === "wait"
+        ? tx(`{${p}} 님의 연결이 끊겼습니다 — 돌아올 때까지 기다립니다`, `{${p}} disconnected — waiting for them to come back`)
+        : tx(`{${p}} 님의 연결이 끊겼습니다 — ${GRACE_DROP / 1000}초 기다린 뒤 AI 가 대신 둡니다`, `{${p}} disconnected — AI takes over after ${GRACE_DROP / 1000}s`));
     this.save();
   }
   sendTo(p, msg) {
@@ -228,28 +237,81 @@ export class Room {
     const isHost = this.players[p] && this.players[p].local;
     if (msg.t === "act") { if (this.runner) this.runner.receive(p, msg); return; }
     if (msg.t === "bye") { if (!isHost) this.onClose(this.players[p].conn, true); return; }
+    if (msg.t === "emote") return this.emote(p, msg.e);
+    if (msg.t === "profile") return this.profile(p, msg);
     if (!isHost) return;
+    if (msg.t === "takeover") return this.takeover(msg.p);
     if (msg.t === "setting") return this.setSetting(msg.key, msg.value);
     if (msg.t === "start") return this.start();
     if (msg.t === "again") return this.start();
     if (msg.t === "lobby") return this.backToLobby();
   }
 
+  /* ----- Reactions · profiles · seats handed to the AI ----- */
+  emote(p, e) {
+    const pl = this.players[p], now = Date.now();
+    if (!pl || pl.kind !== "human" || !EMOTE_IDS.has(e) || now - (pl.lastEmote || 0) < EMOTE_GAP) return;
+    pl.lastEmote = now;
+    const msg = { t: "emote", name: pl.name, look: pl.look || null, seat: p, e };
+    for (const h of this.humans()) if (h.local || h.online) this.deliver(h, msg);
+  }
+  /* Someone changed their name or avatar */
+  profile(p, msg) {
+    const pl = this.players[p];
+    if (!pl || pl.kind !== "human") return;
+    const name = this.uniqueName(cleanName(msg.name), pl), old = pl.name;
+    pl.look = cleanLook(msg.look);
+    if (name !== old) {
+      const t = this.tally.find(x => x.name === old);
+      if (t && !this.tally.some(x => x.name === name)) t.name = name;
+      pl.name = name;
+    }
+    const t = this.tally.find(x => x.name === pl.name);
+    if (t) t.look = pl.look;
+    if (this.runner) this.runner.broadcast(); else this.lobby();
+  }
+  takeover(p) {
+    const pl = this.players[p];
+    if (!this.runner || !pl || pl.kind !== "human" || pl.local || pl.online || pl.handed) return;
+    pl.handed = true;
+    this.runner.presence(p, tx(`{${p}} 님 자리는 AI 가 대신 둡니다 (돌아오면 자리를 되찾습니다)`, `AI plays for {${p}} (they get the seat back when they return)`));
+    this.save();
+  }
+  /* Scoreboard of the evening: 1st 3 points, 2nd 2, 3rd 1 */
+  recordResults(r) {
+    if (r.recorded) return;
+    r.recorded = true;
+    let res = [];
+    try { res = r.E.results(r.S) || []; } catch (e) { return; }
+    for (const x of res) {
+      const pl = this.players[x.p];
+      if (!pl || pl.kind !== "human") continue;
+      let t = this.tally.find(y => y.name === pl.name);
+      if (!t) this.tally.push(t = { name: pl.name, look: pl.look || null, pts: 0, wins: 0, games: 0 });
+      t.look = pl.look || null;
+      t.games++;
+      t.pts += Math.max(0, 4 - x.rank);
+      if (x.rank === 1) t.wins++;
+    }
+  }
+
   /* ----- Lobby ----- */
   publicPlayers() {
-    return this.players.map((pl, i) => ({ name: pl.name, kind: pl.kind === "ai" ? "ai" : (pl.online || pl.local ? "human" : "away"), host: i === 0 && pl.kind === "human" }));
+    return this.players.map((pl, i) => ({ name: pl.name, look: pl.look || null, kind: pl.kind === "ai" ? "ai" : (pl.online || pl.local ? "human" : "away"),
+      host: i === 0 && pl.kind === "human", handed: !!pl.handed }));
   }
   lobby() {
     const humans = this.humans();
-    const list = humans.map((pl, i) => ({ name: pl.name, host: i === 0, away: !pl.local && !pl.online }));
+    const list = humans.map((pl, i) => ({ name: pl.name, look: pl.look || null, host: i === 0, away: !pl.local && !pl.online }));
     const n = this.seatsFor(humans.length);
-    humans.forEach((pl, i) => this.deliver(pl, { t: "lobby", you: i, code: this.code, players: list, settings: this.settings, seats: n }));
+    humans.forEach((pl, i) => this.deliver(pl, { t: "lobby", you: i, code: this.code, players: list, settings: this.settings, seats: n, tally: this.tally }));
     this.save();
   }
   setSetting(key, value) {
     if (this.runner) return;
     if (key === "game") { if (!gameById(value)) return; this.settings.game = value; this.settings.opts = {}; if (this.settings.seats !== "auto") this.settings.seats = 0; }
     else if (key === "seats" || key === "level" || key === "timer") this.settings[key] = value;
+    else if (key === "away") this.settings.away = value === "wait" ? "wait" : "ai";
     else if (key.startsWith("opt.")) this.settings.opts[key.slice(4)] = value;
     this.fixSettings();
     const { seats, ...pref } = this.settings;
@@ -259,7 +321,7 @@ export class Room {
   start() {
     if (this.runner && !this.runner.finished) return;
     const E = this.engine;
-    const humans = this.nextHumans().map(h => ({ name: h.name, token: h.token, kind: "human", conn: h.conn, local: !!h.local, online: h.local ? true : !!h.online }));
+    const humans = this.nextHumans().map(h => ({ name: h.name, look: h.look || null, token: h.token, kind: "human", conn: h.conn, local: !!h.local, online: h.local ? true : !!h.online }));
     if (humans.length > E.players.max) { toast(L(`이 게임은 최대 ${E.players.max}명입니다`, `This game allows at most ${E.players.max} players`)); return; }
     this.waiting = [];
     this.fixSettings();
@@ -275,7 +337,7 @@ export class Room {
   backToLobby() {
     if (this.runner) this.runner.stop();
     this.runner = null;
-    const merged = this.nextHumans().map(h => ({ name: h.name, token: h.token, kind: "human", conn: h.conn, local: !!h.local, online: h.local ? true : !!h.online }));
+    const merged = this.nextHumans().map(h => ({ name: h.name, look: h.look || null, token: h.token, kind: "human", conn: h.conn, local: !!h.local, online: h.local ? true : !!h.online }));
     this.players = merged;
     this.waiting = [];
     this.fixSettings();
@@ -297,7 +359,7 @@ class Runner {
   constructor(room, engine, settings, restore) {
     this.room = room; this.E = engine; this.settings = JSON.parse(JSON.stringify(settings));
     if (restore) {
-      this.S = restore.S; this.seq = restore.seq || 0; this.runId = restore.runId;
+      this.S = restore.S; this.seq = restore.seq || 0; this.runId = restore.runId; this.recorded = !!restore.recorded;
     } else {
       const seed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
       this.S = engine.setup({ n: room.players.length, seed, settings: this.settings.opts });
@@ -357,8 +419,10 @@ class Runner {
       }
     } else {
       const think = x.think !== undefined ? x.think : (this.E.thinkTime ? this.E.thinkTime(this.S, x.p, x.kind) : 700 + Math.random() * 700);
-      // A disconnected human keeps the seat for a grace period before the AI plays for them
-      const grace = pl.kind === "human" ? Math.max(0, (pl.graceUntil || 0) - Date.now()) : 0;
+      // "wait": a disconnected human's turn waits until they return (presence() rebuilds the question) or the host hands it over
+      if (pl.kind === "human" && !pl.handed && this.settings.away === "wait") { ask.away = true; return ask; }
+      // otherwise the seat is kept for a grace period before the AI plays for them
+      const grace = pl.kind === "human" && !pl.handed ? Math.max(0, (pl.graceUntil || 0) - Date.now()) : 0;
       if (grace) { ask.away = true; ask.deadline = Date.now() + grace; ask.total = grace; }
       hostSleep(grace + think).then(aiMove);
     }
@@ -376,6 +440,7 @@ class Runner {
     this.seq++;
     const over = this.E.over(this.S);
     const results = over ? this.E.results(this.S) : null;
+    if (over) this.room.recordResults(this);
     const asks = [...this.asks.values()].map(a => ({ p: a.p, kind: a.kind, id: a.id, secret: a.secret, away: a.away, total: a.total, ms: a.deadline ? Math.max(0, a.deadline - Date.now()) : 0 }));
     const players = this.room.publicPlayers();
     const waiting = this.room.waiting.map(w => w.name);
@@ -384,7 +449,8 @@ class Runner {
       const v = this.E.view(this.S, p);
       const ev = evs.map(e => (this.E.filterEvent ? this.E.filterEvent(e, p, this.S) : e)).filter(Boolean);
       const pending = asks.filter(a => !a.secret || a.p === p).map(({ secret, ...a }) => a);
-      this.room.sendTo(p, { t: "state", run: this.runId, seq: this.seq, game: this.E.id, me: p, v, ev, pending, players, waiting, settings: this.settings, over, results });
+      this.room.sendTo(p, { t: "state", run: this.runId, seq: this.seq, game: this.E.id, me: p, v, ev, pending, players, waiting, settings: this.settings, over, results,
+        tally: over ? this.room.tally : undefined });
     });
     if (over) for (const w of this.room.waiting) if (w.conn) this.room.sendWait(w);
     this.room.save();
