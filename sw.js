@@ -77,13 +77,16 @@ self.addEventListener("fetch", e => {
   if (req.method !== "GET") return;
   const url = new URL(req.url), same = url.origin === location.origin;
   if (!same && !CDN.test(url.hostname)) return;          // signalling, TURN credentials etc. are never cached
+  const net = () => fetch(req, same ? { cache: "no-cache" } : undefined);
+  const cached = () => caches.match(req, { ignoreSearch: true });
   e.respondWith(
-    fetch(req, same ? { cache: "no-cache" } : undefined)
+    net()
+      // GitHub Pages sometimes answers 503 for a moment: try once more, then use the saved copy if there is one
+      .then(res => (res.status >= 500 ? new Promise(r => setTimeout(r, 400)).then(net) : res))
       .then(res => {
-        if (res.ok || res.type === "opaque") { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }
-        return res;
+        if (res.ok || res.type === "opaque") { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); return res; }
+        return cached().then(hit => hit || res);
       })
-      .catch(() => caches.match(req, { ignoreSearch: true })
-        .then(hit => hit || (req.mode === "navigate" ? caches.match("index.html") : Response.error())))
+      .catch(() => cached().then(hit => hit || (req.mode === "navigate" ? caches.match("index.html") : Response.error())))
   );
 });
